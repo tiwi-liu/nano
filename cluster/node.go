@@ -351,12 +351,14 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 		}
 	}
 	s, err := n.findOrCreateSession(req.SessionId, req.GateAddr)
-	if uid > 0 {
-		s.Bind(uid)
-	}
 	if err != nil {
 		fmt.Printf("findOrCreateSession uid=>%v \n", err)
 		return nil, err
+	}
+	if uid > 0 {
+		if err := s.Bind(uid); err != nil {
+			return nil, err
+		}
 	}
 	handler, found := n.handler.localHandlers[req.Route]
 	if !found {
@@ -414,7 +416,11 @@ func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage)
 	if s == nil {
 		return &clusterpb.MemberHandleResponse{}, fmt.Errorf("session not found: %v", req.SessionId)
 	}
-	return &clusterpb.MemberHandleResponse{}, s.ResponseMID(req.Id, req.Data, req.ErrCode)
+	code, ok := errcode.FromWire(req.ErrCode)
+	if !ok {
+		code = errcode.CodeUnknown
+	}
+	return &clusterpb.MemberHandleResponse{}, s.ResponseMID(req.Id, req.Data, code)
 }
 
 func (n *Node) NewMember(_ context.Context, req *clusterpb.NewMemberRequest) (*clusterpb.NewMemberResponse, error) {

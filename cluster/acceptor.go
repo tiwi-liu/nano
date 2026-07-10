@@ -7,6 +7,7 @@ import (
 	"github.com/lonng/nano/cluster/clusterpb"
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/mock"
+	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/session"
 )
 
@@ -52,10 +53,13 @@ func (a *acceptor) RPC(route string, v interface{}) error {
 
 // ResponseMid implements the session.NetworkEntity interface
 func (a *acceptor) ResponseMid(mid uint64, errCode uint64, v interface{}) error {
-	// TODO: buffer
-	data, err := message.Serialize(v)
-	if err != nil {
-		return err
+	var data []byte
+	if errCode == uint64(errcode.CodeOk) {
+		var err error
+		data, err = message.Serialize(v)
+		if err != nil {
+			return err
+		}
 	}
 	request := &clusterpb.ResponseMessage{
 		SessionId: a.sid,
@@ -63,7 +67,7 @@ func (a *acceptor) ResponseMid(mid uint64, errCode uint64, v interface{}) error 
 		Data:      data,
 		ErrCode:   errCode,
 	}
-	_, err = a.gateClient.HandleResponse(context.Background(), request)
+	_, err := a.gateClient.HandleResponse(context.Background(), request)
 	return err
 }
 

@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/service"
 )
 
@@ -92,15 +93,11 @@ func (s *Session) Push(route string, v interface{}) error {
 
 // ResponseMID responses message to client, mid is
 // request message ID
-func (s *Session) ResponseMID(mid uint64, v interface{}, errCode ...uint64) error {
+func (s *Session) ResponseMID(mid uint64, v interface{}, code errcode.Code) error {
 	if mid <= 0 {
 		return nil
 	}
-	var err uint64 = 0
-	if len(errCode) == 1 {
-		err = errCode[0]
-	}
-	return s.entity.ResponseMid(mid, err, v)
+	return s.entity.ResponseMid(mid, uint64(code), v)
 }
 
 // // 发送错误给client

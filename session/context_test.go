@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/lonng/nano/pkg/errcode"
 )
 
 type requestContextTestEntity struct {
@@ -58,6 +60,9 @@ func TestRequestContextBindsResponseToCapturedMID(t *testing.T) {
 	if got := entity.responses[2]; got != "second" {
 		t.Fatalf("mid 2 response = %v, want second", got)
 	}
+	if got := entity.responseErrors[1]; got != uint64(errcode.CodeOk) {
+		t.Fatalf("business response system code = %d, want CodeOk", got)
+	}
 }
 
 func TestRequestContextPropagatesDeadline(t *testing.T) {
@@ -96,22 +101,22 @@ func TestRequestContextRejectsResponseWithoutRequestMID(t *testing.T) {
 	}
 }
 
-func TestRequestContextTimeoutResponseIsSentAtMostOnce(t *testing.T) {
+func TestRequestContextSystemErrorResponseIsSentAtMostOnce(t *testing.T) {
 	entity := newResponderTestEntity()
 	ctx, cancel := NewRequestContext(context.Background(), New(entity), 7)
 	defer cancel()
 
-	if !ctx.ResponseTimeout(5) {
+	if !ctx.RespondSystemError(errcode.CodeRequestTimeout) {
 		t.Fatal("first timeout response should be sent")
 	}
-	if ctx.ResponseTimeout(5) {
+	if ctx.RespondSystemError(errcode.CodeRequestTimeout) {
 		t.Fatal("second timeout response should be ignored")
 	}
 	if err := ctx.Response("late"); !errors.Is(err, ErrResponseAlreadySent) {
 		t.Fatalf("late response error = %v, want ErrResponseAlreadySent", err)
 	}
-	if got := entity.responseErrors[7]; got != 5 {
-		t.Fatalf("timeout error code = %d, want 5", got)
+	if got := entity.responseErrors[7]; got != uint64(errcode.CodeRequestTimeout) {
+		t.Fatalf("timeout error code = %d, want %d", got, errcode.CodeRequestTimeout)
 	}
 }
 

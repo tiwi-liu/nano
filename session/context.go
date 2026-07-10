@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"sync/atomic"
+
+	"github.com/lonng/nano/pkg/errcode"
 )
 
 var (
@@ -36,7 +38,9 @@ func (c *RequestContext) Session() *Session {
 	return c.session
 }
 
-func (c *RequestContext) Response(v interface{}, errCode ...uint64) error {
+// Response sends a business response. Its system header code is always CodeOk;
+// business failures must be represented by the response body.
+func (c *RequestContext) Response(v interface{}) error {
 	if c == nil || c.Context == nil || c.session == nil {
 		return errors.New("invalid request context")
 	}
@@ -49,17 +53,22 @@ func (c *RequestContext) Response(v interface{}, errCode ...uint64) error {
 	if !c.responded.CompareAndSwap(false, true) {
 		return ErrResponseAlreadySent
 	}
-	return c.session.ResponseMID(c.mid, v, errCode...)
+	return c.session.ResponseMID(c.mid, v, errcode.CodeOk)
 }
 
-// ResponseTimeout sends the framework timeout response if the request has not
-// already produced a response. It is intended for the gateway deadline hook.
-func (c *RequestContext) ResponseTimeout(errCode uint64) bool {
+// RespondSystemError sends a header-only system error if no response has been
+// sent. Framework dispatch code owns this operation; business handlers should
+// describe their errors in the response body instead.
+func (c *RequestContext) RespondSystemError(code errcode.Code) bool {
 	if c == nil || c.session == nil || c.mid == 0 || !c.responded.CompareAndSwap(false, true) {
 		return false
 	}
-	_ = c.session.ResponseMID(c.mid, nil, errCode)
+	_ = c.session.ResponseMID(c.mid, nil, code)
 	return true
+}
+
+func (c *RequestContext) Responded() bool {
+	return c != nil && c.responded.Load()
 }
 
 func (c *RequestContext) Push(route string, v interface{}) error {

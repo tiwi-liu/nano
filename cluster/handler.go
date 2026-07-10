@@ -30,6 +30,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -373,6 +374,9 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 			member := h.currentNode.Options.RemoteServiceRoute(service, session, members)
 			if member == nil {
 				log.Println(fmt.Sprintf("customize remoteServiceRoute handler: %s is not found", msg.Route))
+				if msg.Type == message.Request {
+					session.ResponseMID(msg.ID, nil, errcode.CodeServiceUnavailable)
+				}
 				return
 			}
 			remoteAddr = member.ServiceAddr
@@ -390,7 +394,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	if err != nil {
 		log.Println(err)
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeInternalErr)
+			session.ResponseMID(msg.ID, nil, errcode.CodeNetworkException)
 		}
 		return
 	}
@@ -433,7 +437,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	}
 	if err != nil {
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeInternalErr)
+			session.ResponseMID(msg.ID, nil, errcode.CodeNetworkException)
 		}
 		log.Println(fmt.Sprintf("Process remote message (%d:%s) error: %+v", msg.ID, msg.Route, err))
 	}
@@ -484,7 +488,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 	if index < 0 {
 		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
 		if msg.Type == message.Request {
-			session.ResponseMID(mid, nil, errcode.CodeMethodNotFound)
+			session.ResponseMID(mid, nil, errcode.CodeBadRequest)
 		}
 		return
 	}
@@ -511,19 +515,14 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 	requestContext, cancel := h.newRequestContext(session, mid)
 	stopTimeoutResponse := context.AfterFunc(requestContext, func() {
 		if errors.Is(requestContext.Err(), context.DeadlineExceeded) {
-			requestContext.ResponseTimeout(errcode.CodeRequestTimeout)
+			requestContext.RespondSystemError(errcode.CodeRequestTimeout)
 		}
 	})
 	args := []reflect.Value{handler.Receiver, reflect.ValueOf(requestContext), reflect.ValueOf(data)}
 	task := func() {
 		defer cancel()
 		defer stopTimeoutResponse()
-		result := handler.Method.Func.Call(args)
-		if len(result) > 0 {
-			if err := result[0].Interface(); err != nil {
-				log.Println(fmt.Sprintf("Service %s error: %+v", msg.Route, err))
-			}
-		}
+		invokeHandler(handler, args, requestContext, msg)
 	}
 
 	// A message can be dispatch to global thread or a user customized thread
@@ -562,5 +561,22 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 			}
 			// For Notify, drop on overload to avoid blocking caller.
 		}
+	}
+}
+
+func invokeHandler(handler *component.Handler, args []reflect.Value, requestContext *session.RequestContext, msg *message.Message) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Println(fmt.Sprintf("Service %s panic: %+v\n%s", msg.Route, recovered, debug.Stack()))
+		}
+		if msg.Type == message.Request && !requestContext.Responded() {
+			requestContext.RespondSystemError(errcode.CodeInternalErr)
+			log.Println(fmt.Sprintf("Service %s returned without a response", msg.Route))
+		}
+	}()
+
+	result := handler.Method.Func.Call(args)
+	if len(result) > 0 && !result[0].IsNil() {
+		log.Println(fmt.Sprintf("Service %s error: %+v", msg.Route, result[0].Interface()))
 	}
 }
