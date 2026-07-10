@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNewSession(t *testing.T) {
 	s := New(nil)
@@ -11,12 +14,17 @@ func TestNewSession(t *testing.T) {
 
 func TestSession_Bind(t *testing.T) {
 	s := New(nil)
-	uids := []int64{100, 1000, 10000000}
-	for i, uid := range uids {
-		s.Bind(uid)
-		if s.UID() != uids[i] {
-			t.Fail()
-		}
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Bind(100); err != nil {
+		t.Fatalf("binding the same UID should be idempotent: %v", err)
+	}
+	if err := s.Bind(200); !errors.Is(err, ErrUIDMismatch) {
+		t.Fatalf("Bind error = %v, want ErrUIDMismatch", err)
+	}
+	if got := s.UID(); got != 100 {
+		t.Fatalf("UID = %d, want original UID 100", got)
 	}
 }
 

@@ -43,6 +43,8 @@ type NetworkEntity interface {
 var (
 	//ErrIllegalUID represents a invalid uid
 	ErrIllegalUID = errors.New("illegal uid")
+	// ErrUIDMismatch indicates an attempt to change an established identity.
+	ErrUIDMismatch = errors.New("session uid mismatch")
 )
 
 // Session represents a client session which could storage temp data during low-level
@@ -120,9 +122,18 @@ func (s *Session) Bind(uid int64) error {
 	if uid < 1 {
 		return ErrIllegalUID
 	}
-
-	atomic.StoreInt64(&s.uid, uid)
-	return nil
+	for {
+		current := atomic.LoadInt64(&s.uid)
+		if current == uid {
+			return nil
+		}
+		if current != 0 {
+			return ErrUIDMismatch
+		}
+		if atomic.CompareAndSwapInt64(&s.uid, 0, uid) {
+			return nil
+		}
+	}
 }
 
 // Close terminate current session, session related data will not be released,

@@ -20,6 +20,7 @@ type RequestContext struct {
 	context.Context
 	session   *Session
 	mid       uint64
+	uid       atomic.Int64
 	responded atomic.Bool
 }
 
@@ -28,7 +29,11 @@ func NewRequestContext(parent context.Context, s *Session, mid uint64) (*Request
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	return &RequestContext{Context: ctx, session: s, mid: mid}, cancel
+	requestContext := &RequestContext{Context: ctx, session: s, mid: mid}
+	if s != nil {
+		requestContext.uid.Store(s.UID())
+	}
+	return requestContext, cancel
 }
 
 func (c *RequestContext) Session() *Session {
@@ -89,7 +94,11 @@ func (c *RequestContext) Bind(uid int64) error {
 	if c == nil || c.session == nil {
 		return errors.New("invalid request context")
 	}
-	return c.session.Bind(uid)
+	if err := c.session.Bind(uid); err != nil {
+		return err
+	}
+	c.uid.Store(uid)
+	return nil
 }
 
 func (c *RequestContext) ID() int64 {
@@ -100,10 +109,10 @@ func (c *RequestContext) ID() int64 {
 }
 
 func (c *RequestContext) UID() int64 {
-	if c == nil || c.session == nil {
+	if c == nil {
 		return 0
 	}
-	return c.session.UID()
+	return c.uid.Load()
 }
 
 func (c *RequestContext) RemoteAddr() net.Addr {

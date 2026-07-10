@@ -565,18 +565,24 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 }
 
 func invokeHandler(handler *component.Handler, args []reflect.Value, requestContext *session.RequestContext, msg *message.Message) {
+	var handlerErr error
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			log.Println(fmt.Sprintf("Service %s panic: %+v\n%s", msg.Route, recovered, debug.Stack()))
 		}
 		if msg.Type == message.Request && !requestContext.Responded() {
-			requestContext.RespondSystemError(errcode.CodeInternalErr)
+			code := errcode.CodeInternalErr
+			if errors.Is(handlerErr, session.ErrUIDMismatch) {
+				code = errcode.CodePermissionDenied
+			}
+			requestContext.RespondSystemError(code)
 			log.Println(fmt.Sprintf("Service %s returned without a response", msg.Route))
 		}
 	}()
 
 	result := handler.Method.Func.Call(args)
 	if len(result) > 0 && !result[0].IsNil() {
-		log.Println(fmt.Sprintf("Service %s error: %+v", msg.Route, result[0].Interface()))
+		handlerErr, _ = result[0].Interface().(error)
+		log.Println(fmt.Sprintf("Service %s error: %+v", msg.Route, handlerErr))
 	}
 }

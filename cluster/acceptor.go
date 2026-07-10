@@ -66,6 +66,7 @@ func (a *acceptor) ResponseMid(mid uint64, errCode uint64, v interface{}) error 
 		Id:        mid,
 		Data:      data,
 		ErrCode:   errCode,
+		Uid:       a.session.UID(),
 	}
 	_, err := a.gateClient.HandleResponse(context.Background(), request)
 	return err

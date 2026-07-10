@@ -55,6 +55,7 @@ message ResponseMessage {
     uint64 id = 2;
     bytes data = 3;
     uint64 errCode = 4;
+    int64 uid = 5;
 }
 
 message PushMessage {

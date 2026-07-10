@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,6 +77,33 @@ func TestRequestContextPropagatesDeadline(t *testing.T) {
 	got, ok := ctx.Deadline()
 	if !ok || !got.Equal(want) {
 		t.Fatalf("deadline = %v, %v; want %v, true", got, ok, want)
+	}
+}
+
+func TestRequestContextCapturesUIDSnapshot(t *testing.T) {
+	s := New(newResponderTestEntity())
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := NewRequestContext(context.Background(), s, 1)
+	defer cancel()
+
+	// Simulate an unexpected concurrent mutation of the connection identity.
+	atomic.StoreInt64(&s.uid, 200)
+	if got := ctx.UID(); got != 100 {
+		t.Fatalf("request UID = %d, want captured UID 100", got)
+	}
+}
+
+func TestRequestContextBindUpdatesRequestIdentity(t *testing.T) {
+	ctx, cancel := NewRequestContext(context.Background(), New(newResponderTestEntity()), 1)
+	defer cancel()
+
+	if err := ctx.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	if got := ctx.UID(); got != 100 {
+		t.Fatalf("request UID = %d, want newly bound UID 100", got)
 	}
 }
 

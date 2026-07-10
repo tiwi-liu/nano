@@ -7,10 +7,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/lonng/nano/cluster/clusterpb"
 	"github.com/lonng/nano/component"
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/session"
+	"google.golang.org/grpc/metadata"
 )
 
 type handlerResponseEntity struct {
@@ -39,6 +41,12 @@ func (*responseContractService) Responds(ctx *session.RequestContext, _ *[]byte)
 }
 func (*responseContractService) Panics(*session.RequestContext, *[]byte) error {
 	panic("unexpected failure")
+}
+func (*responseContractService) UIDConflict(ctx *session.RequestContext, _ *[]byte) error {
+	if err := ctx.Bind(100); err != nil {
+		return err
+	}
+	return ctx.Bind(200)
 }
 
 func invokeResponseContractHandler(t *testing.T, methodName string) *handlerResponseEntity {
@@ -83,5 +91,69 @@ func TestHandlerPanicGetsInternalSystemError(t *testing.T) {
 	entity := invokeResponseContractHandler(t, "Panics")
 	if entity.code != errcode.CodeInternalErr {
 		t.Fatalf("system code = %d, want CodeInternalErr", entity.code)
+	}
+}
+
+func TestForwardedUIDMismatchGetsPermissionDenied(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	s := session.New(entity)
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+
+	if bindForwardedUID(s, 200, 9) {
+		t.Fatal("mismatched forwarded UID should be rejected")
+	}
+	if entity.code != errcode.CodePermissionDenied {
+		t.Fatalf("system code = %d, want CodePermissionDenied", entity.code)
+	}
+	if got := s.UID(); got != 100 {
+		t.Fatalf("session UID = %d, want original UID 100", got)
+	}
+}
+
+func TestForwardedUIDRequiresSingleValidMetadataValue(t *testing.T) {
+	validContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("uid", "100"))
+	if uid, err := forwardedUID(validContext); err != nil || uid != 100 {
+		t.Fatalf("forwardedUID(valid) = (%d, %v)", uid, err)
+	}
+
+	invalidContexts := []context.Context{
+		context.Background(),
+		metadata.NewIncomingContext(context.Background(), metadata.Pairs("uid", "invalid")),
+		metadata.NewIncomingContext(context.Background(), metadata.Pairs("uid", "-1")),
+		metadata.NewIncomingContext(context.Background(), metadata.Pairs("uid", "100", "uid", "200")),
+	}
+	for _, ctx := range invalidContexts {
+		if _, err := forwardedUID(ctx); err == nil {
+			t.Fatal("invalid forwarded UID metadata was accepted")
+		}
+	}
+}
+
+func TestHandlerUIDConflictGetsPermissionDenied(t *testing.T) {
+	entity := invokeResponseContractHandler(t, "UIDConflict")
+	if entity.code != errcode.CodePermissionDenied {
+		t.Fatalf("system code = %d, want CodePermissionDenied", entity.code)
+	}
+}
+
+func TestHandleResponsePropagatesUIDToGatewaySession(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	s := session.New(entity)
+	n := &Node{sessions: map[int64]*session.Session{10: s}}
+
+	_, err := n.HandleResponse(context.Background(), &clusterpb.ResponseMessage{
+		SessionId: 10,
+		Id:        7,
+		Uid:       100,
+		Data:      []byte("ok"),
+		ErrCode:   uint64(errcode.CodeOk),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.UID(); got != 100 {
+		t.Fatalf("gateway session UID = %d, want propagated UID 100", got)
 	}
 }

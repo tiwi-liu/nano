@@ -338,27 +338,20 @@ func (n *Node) findOrCreateSession(sid int64, gateAddr string) (*session.Session
 }
 
 func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage) (*clusterpb.MemberHandleResponse, error) {
-	var uid int64 = 0
-	values := metadata.ValueFromIncomingContext(ctx, "uid")
-	for _, value := range values {
-		// 处理每个值
-		num, err := strconv.ParseInt(value, 10, 64)
-		if err == nil {
-			uid = num
-		}
-		if env.Debug {
-			fmt.Printf("HandleRequest uid=>%v \n", value)
-		}
-	}
+	uid, identityErr := forwardedUID(ctx)
 	s, err := n.findOrCreateSession(req.SessionId, req.GateAddr)
 	if err != nil {
 		fmt.Printf("findOrCreateSession uid=>%v \n", err)
 		return nil, err
 	}
-	if uid > 0 {
-		if err := s.Bind(uid); err != nil {
-			return nil, err
-		}
+	if identityErr != nil {
+		s.ResponseMID(req.Id, nil, errcode.CodePermissionDenied)
+		log.Println(fmt.Sprintf("Reject forwarded request identity, SID=%d, Error=%v", req.SessionId, identityErr))
+		return &clusterpb.MemberHandleResponse{}, nil
+	}
+	if !bindForwardedUID(s, uid, req.Id) {
+		log.Println(fmt.Sprintf("Reject forwarded request identity mismatch, SID=%d", req.SessionId))
+		return &clusterpb.MemberHandleResponse{}, nil
 	}
 	handler, found := n.handler.localHandlers[req.Route]
 	if !found {
@@ -377,20 +370,20 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 }
 
 func (n *Node) HandleNotify(ctx context.Context, req *clusterpb.NotifyMessage) (*clusterpb.MemberHandleResponse, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		uid := md["uid"]
-		if env.Debug {
-			fmt.Printf("HandleNotify uid=>%v \n", uid)
-		}
+	uid, identityErr := forwardedUID(ctx)
+	s, err := n.findOrCreateSession(req.SessionId, req.GateAddr)
+	if err != nil {
+		return nil, err
+	}
+	if identityErr != nil {
+		return nil, fmt.Errorf("forwarded notify identity rejected: %w", identityErr)
+	}
+	if !bindForwardedUID(s, uid, 0) {
+		return nil, fmt.Errorf("forwarded notify identity mismatch")
 	}
 	handler, found := n.handler.localHandlers[req.Route]
 	if !found {
 		return nil, fmt.Errorf("service not found in current node: %v", req.Route)
-	}
-	s, err := n.findOrCreateSession(req.SessionId, req.GateAddr)
-	if err != nil {
-		return nil, err
 	}
 	msg := &message.Message{
 		Type:  message.Notify,
@@ -399,6 +392,37 @@ func (n *Node) HandleNotify(ctx context.Context, req *clusterpb.NotifyMessage) (
 	}
 	n.handler.localProcess(handler, 0, s, msg)
 	return &clusterpb.MemberHandleResponse{}, nil
+}
+
+func forwardedUID(ctx context.Context) (int64, error) {
+	values := metadata.ValueFromIncomingContext(ctx, "uid")
+	if len(values) != 1 {
+		return 0, fmt.Errorf("expected one forwarded uid, got %d", len(values))
+	}
+	uid, err := strconv.ParseInt(values[0], 10, 64)
+	if err != nil || uid < 0 {
+		return 0, fmt.Errorf("invalid forwarded uid")
+	}
+	return uid, nil
+}
+
+func bindForwardedUID(s *session.Session, uid int64, mid uint64) bool {
+	if s == nil || (uid == 0 && s.UID() != 0) {
+		if s != nil && mid > 0 {
+			s.ResponseMID(mid, nil, errcode.CodePermissionDenied)
+		}
+		return false
+	}
+	if uid == 0 {
+		return true
+	}
+	if err := s.Bind(uid); err != nil {
+		if mid > 0 {
+			s.ResponseMID(mid, nil, errcode.CodePermissionDenied)
+		}
+		return false
+	}
+	return true
 }
 
 // 网关接受来之其他节点的中继Push
@@ -415,6 +439,10 @@ func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage)
 	s := n.findSession(req.SessionId)
 	if s == nil {
 		return &clusterpb.MemberHandleResponse{}, fmt.Errorf("session not found: %v", req.SessionId)
+	}
+	if !bindForwardedUID(s, req.Uid, req.Id) {
+		log.Println(fmt.Sprintf("Reject forwarded response identity mismatch, SID=%d", req.SessionId))
+		return &clusterpb.MemberHandleResponse{}, nil
 	}
 	code, ok := errcode.FromWire(req.ErrCode)
 	if !ok {
