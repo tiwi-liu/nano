@@ -59,7 +59,10 @@ type Options struct {
 	TSLKey             string
 	UnregisterCallback func(Member)
 	RemoteServiceRoute CustomerRemoteServiceRoute
+	RequestTimeout     time.Duration
 }
+
+const DefaultRequestTimeout = 5 * time.Second
 
 // Node represents a node in nano cluster, which will contains a group of services.
 // All services will register to cluster and messages will be forwarded to the node

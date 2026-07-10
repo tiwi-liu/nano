@@ -25,19 +25,19 @@ type (
 	}
 )
 
-func (bs *BindService) Login(s *session.Session, msg *LoginRequest) error {
+func (bs *BindService) Login(ctx *session.RequestContext, msg *LoginRequest) error {
 	bs.nextGateUid++
 	uid := bs.nextGateUid
 	request := &protocol.NewUserRequest{
 		Nickname: msg.Nickname,
 		GateUid:  uid,
 	}
-	if err := s.RPC("TopicService.NewUser", request); err != nil {
+	if err := ctx.RPC("TopicService.NewUser", request); err != nil {
 		return errors.Trace(err)
 	}
-	return s.Response(&LoginResponse{})
+	return ctx.Response(&LoginResponse{})
 }
 
-func (bs *BindService) BindChatServer(s *session.Session, msg []byte) error {
+func (bs *BindService) BindChatServer(ctx *session.RequestContext, msg []byte) error {
 	return errors.Errorf("not implement")
 }

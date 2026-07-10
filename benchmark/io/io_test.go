@@ -1,3 +1,4 @@
+//go:build benchmark
 // +build benchmark
 
 package io
@@ -23,7 +24,6 @@ const (
 	conc = 1000              // concurrent client count
 )
 
-//
 type TestHandler struct {
 	component.Base
 	metrics int32
@@ -48,9 +48,9 @@ func NewTestHandler() *TestHandler {
 	}
 }
 
-func (h *TestHandler) Ping(s *session.Session, data *testdata.Ping) error {
+func (h *TestHandler) Ping(ctx *session.RequestContext, data *testdata.Ping) error {
 	atomic.AddInt32(&h.metrics, 1)
-	return s.Push("pong", &testdata.Pong{Content: data.Content})
+	return ctx.Push("pong", &testdata.Pong{Content: data.Content})
 }
 
 func server() {

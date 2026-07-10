@@ -23,6 +23,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/lonng/nano/pkg/errcode"
 	"google.golang.org/grpc/metadata"
@@ -108,6 +109,19 @@ type LocalHandler struct {
 
 	pipeline    pipeline.Pipeline
 	currentNode *Node
+}
+
+func (h *LocalHandler) newRequestContext(s *session.Session, mid uint64) (*session.RequestContext, context.CancelFunc) {
+	timeout := h.currentNode.RequestTimeout
+	if timeout <= 0 {
+		timeout = DefaultRequestTimeout
+	}
+	parent, parentCancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := session.NewRequestContext(parent, s, mid)
+	return ctx, func() {
+		cancel()
+		parentCancel()
+	}
 }
 
 func NewHandler(currentNode *Node, pipeline pipeline.Pipeline) *LocalHandler {
@@ -426,12 +440,12 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 }
 
 func (h *LocalHandler) processMessage(agent *agent, msg *message.Message) {
-	var lastMid uint64
+	var mid uint64
 	switch msg.Type {
 	case message.Request:
-		lastMid = msg.ID
+		mid = msg.ID
 	case message.Notify:
-		lastMid = 0
+		mid = 0
 	default:
 		log.Println("Invalid message type: " + msg.Type.String())
 		return
@@ -441,7 +455,7 @@ func (h *LocalHandler) processMessage(agent *agent, msg *message.Message) {
 	if !found {
 		h.remoteProcess(agent.session, msg, false)
 	} else {
-		h.localProcess(handler, lastMid, agent.session, msg)
+		h.localProcess(handler, mid, agent.session, msg)
 	}
 }
 
@@ -454,13 +468,13 @@ func (h *LocalHandler) handleWS(conn *websocket.Conn) {
 	go h.handle(c)
 }
 
-func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, session *session.Session, msg *message.Message) {
+func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, session *session.Session, msg *message.Message) {
 	if pipe := h.pipeline; pipe != nil {
 		err := pipe.Inbound().Process(session, msg)
 		if err != nil {
 			log.Println("Pipeline process failed: " + err.Error())
 			if msg.Type == message.Request {
-				session.ResponseMID(lastMid, nil, errcode.CodeProtoParseFail)
+				session.ResponseMID(mid, nil, errcode.CodeProtoParseFail)
 			}
 			return
 		}
@@ -470,7 +484,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 	if index < 0 {
 		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
 		if msg.Type == message.Request {
-			session.ResponseMID(lastMid, nil, errcode.CodeMethodNotFound)
+			session.ResponseMID(mid, nil, errcode.CodeMethodNotFound)
 		}
 		return
 	}
@@ -483,7 +497,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		err := env.Serializer.Unmarshal(payload, data)
 		if err != nil {
 			if msg.Type == message.Request {
-				session.ResponseMID(lastMid, nil, errcode.CodeProtoParseFail)
+				session.ResponseMID(mid, nil, errcode.CodeProtoParseFail)
 			}
 			log.Println(fmt.Sprintf("Deserialize to %T failed: %+v (%v)", data, err, payload))
 			return
@@ -494,13 +508,16 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		log.Println(fmt.Sprintf("UID=%d, Message={%s}, Data=%+v", session.UID(), msg.String(), data))
 	}
 
-	args := []reflect.Value{handler.Receiver, reflect.ValueOf(session), reflect.ValueOf(data)}
-	if handler.HasMID {
-		args = append(args, reflect.ValueOf(lastMid))
-	} else if handler.HasResponder {
-		args = append(args, reflect.ValueOf(session.NewResponder(lastMid)))
-	}
+	requestContext, cancel := h.newRequestContext(session, mid)
+	stopTimeoutResponse := context.AfterFunc(requestContext, func() {
+		if errors.Is(requestContext.Err(), context.DeadlineExceeded) {
+			requestContext.ResponseTimeout(errcode.CodeRequestTimeout)
+		}
+	})
+	args := []reflect.Value{handler.Receiver, reflect.ValueOf(requestContext), reflect.ValueOf(data)}
 	task := func() {
+		defer cancel()
+		defer stopTimeoutResponse()
 		result := handler.Method.Func.Call(args)
 		if len(result) > 0 {
 			if err := result[0].Interface(); err != nil {
@@ -516,6 +533,11 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		log.Println(fmt.Sprintf("nano/handler: SchedName %s", s.SchedName))
 		if sched == nil {
 			log.Println(fmt.Sprintf("nanl/handler: cannot found `schedular.LocalScheduler` by %s", s.SchedName))
+			stopTimeoutResponse()
+			cancel()
+			if msg.Type == message.Request {
+				session.ResponseMID(mid, nil, errcode.CodeQueueNotFund)
+			}
 			return
 		}
 
@@ -523,13 +545,20 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		if !ok {
 			log.Println(fmt.Sprintf("nanl/handler: Type %T does not implement the `schedular.LocalScheduler` interface",
 				sched))
+			stopTimeoutResponse()
+			cancel()
+			if msg.Type == message.Request {
+				session.ResponseMID(mid, nil, errcode.CodeQueueNotFund)
+			}
 			return
 		}
 		local.Schedule(task)
 	} else {
 		if !scheduler.TryPushTask(task) {
+			stopTimeoutResponse()
+			cancel()
 			if msg.Type == message.Request {
-				session.ResponseMID(lastMid, nil, errcode.CodeServerBusy)
+				session.ResponseMID(mid, nil, errcode.CodeServerBusy)
 			}
 			// For Notify, drop on overload to avoid blocking caller.
 		}

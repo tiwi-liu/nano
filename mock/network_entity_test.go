@@ -38,13 +38,8 @@ var _ = Suite(&networkEntitySuite{})
 func (s *networkEntitySuite) TestNetworkEntity(c *C) {
 	entity := mock.NewNetworkEntity()
 
-	c.Assert(entity.LastResponse(), IsNil)
-	c.Assert(entity.LastMid(), Equals, uint64(1))
-	c.Assert(entity.Response("hello"), IsNil)
-	c.Assert(entity.LastResponse().(string), Equals, "hello")
-
 	c.Assert(entity.FindResponseByMID(1), IsNil)
-	c.Assert(entity.ResponseMid(1, "test"), IsNil)
+	c.Assert(entity.ResponseMid(1, 0, "test"), IsNil)
 	c.Assert(entity.FindResponseByMID(1).(string), Equals, "test")
 
 	c.Assert(entity.FindResponseByRoute("t.tt"), IsNil)

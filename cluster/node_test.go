@@ -23,24 +23,24 @@ type (
 	GameComponent   struct{ component.Base }
 )
 
-func (c *MasterComponent) Test(session *session.Session, _ []byte) error {
-	return session.Push("test", &testdata.Pong{Content: "master server pong"})
+func (c *MasterComponent) Test(ctx *session.RequestContext, _ []byte) error {
+	return ctx.Push("test", &testdata.Pong{Content: "master server pong"})
 }
 
-func (c *GateComponent) Test(session *session.Session, ping *testdata.Ping) error {
-	return session.Push("test", &testdata.Pong{Content: "gate server pong"})
+func (c *GateComponent) Test(ctx *session.RequestContext, ping *testdata.Ping) error {
+	return ctx.Push("test", &testdata.Pong{Content: "gate server pong"})
 }
 
-func (c *GateComponent) Test2(session *session.Session, ping *testdata.Ping) error {
-	return session.Response(&testdata.Pong{Content: "gate server pong2"})
+func (c *GateComponent) Test2(ctx *session.RequestContext, ping *testdata.Ping) error {
+	return ctx.Response(&testdata.Pong{Content: "gate server pong2"})
 }
 
-func (c *GameComponent) Test(session *session.Session, _ []byte) error {
-	return session.Push("test", &testdata.Pong{Content: "service server pong"})
+func (c *GameComponent) Test(ctx *session.RequestContext, _ []byte) error {
+	return ctx.Push("test", &testdata.Pong{Content: "service server pong"})
 }
 
-func (c *GameComponent) Test2(session *session.Session, ping *testdata.Ping) error {
-	return session.Response(&testdata.Pong{Content: "service server pong2"})
+func (c *GameComponent) Test2(ctx *session.RequestContext, ping *testdata.Ping) error {
+	return ctx.Response(&testdata.Pong{Content: "service server pong2"})
 }
 
 func TestNode(t *testing.T) {

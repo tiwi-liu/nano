@@ -29,10 +29,9 @@ import (
 )
 
 var (
-	typeOfError   = reflect.TypeOf((*error)(nil)).Elem()
-	typeOfBytes   = reflect.TypeOf(([]byte)(nil))
-	typeOfSession = reflect.TypeOf(session.New(nil))
-	typeOfResponder = reflect.TypeOf(&session.Responder{})
+	typeOfError          = reflect.TypeOf((*error)(nil)).Elem()
+	typeOfBytes          = reflect.TypeOf(([]byte)(nil))
+	typeOfRequestContext = reflect.TypeOf(&session.RequestContext{})
 )
 
 func isExported(name string) bool {
@@ -57,10 +56,8 @@ func isHandlerMethod(method reflect.Method) bool {
 		return false
 	}
 
-	// Method needs either:
-	// 1) receiver, *Session, []byte|*Req
-	// 2) receiver, *Session, []byte|*Req, mid
-	if mt.NumIn() != 3 && mt.NumIn() != 4 {
+	// Method needs receiver, *session.RequestContext, []byte|*Req.
+	if mt.NumIn() != 3 {
 		return false
 	}
 
@@ -70,25 +67,13 @@ func isHandlerMethod(method reflect.Method) bool {
 		return false
 	}
 
-	//校验session参数
-	if t1 := mt.In(1); t1.Kind() != reflect.Ptr || t1 != typeOfSession {
+	//校验上下文参数
+	if t1 := mt.In(1); t1.Kind() != reflect.Ptr || t1 != typeOfRequestContext {
 		return false
 	}
 
 	//校验业务参数
 	if (mt.In(2).Kind() != reflect.Ptr && mt.In(2) != typeOfBytes) || mt.Out(0) != typeOfError {
-		return false
-	}
-
-	// Optional 4th argument: legacy mid or responder
-	if mt.NumIn() == 4 {
-		t4 := mt.In(3)
-		if t4.Kind() == reflect.Uint64 {
-			return true
-		}
-		if t4 == typeOfResponder {
-			return true
-		}
 		return false
 	}
 

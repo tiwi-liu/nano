@@ -34,8 +34,6 @@ import (
 type NetworkEntity interface {
 	Push(route string, v interface{}) error
 	RPC(route string, v interface{}) error
-	LastMid() uint64
-	Response(v interface{}, err uint64) error
 	ResponseMid(mid uint64, err uint64, v interface{}) error
 	Close() error
 	RemoteAddr() net.Addr
@@ -58,13 +56,6 @@ type Session struct {
 	entity       NetworkEntity          // low-level network entity
 	data         map[string]interface{} // session data store
 	router       *Router
-}
-
-// Responder binds a request message ID to simplify async responses.
-// It allows business code to respond later without carrying raw mid values.
-type Responder struct {
-	s   *Session
-	mid uint64
 }
 
 // New returns a new session instance
@@ -99,15 +90,6 @@ func (s *Session) Push(route string, v interface{}) error {
 	return s.entity.Push(route, v)
 }
 
-// Response message to client
-func (s *Session) Response(v interface{}, errCode ...uint64) error {
-	var err uint64 = 0
-	if len(errCode) == 1 {
-		err = errCode[0]
-	}
-	return s.entity.Response(v, err)
-}
-
 // ResponseMID responses message to client, mid is
 // request message ID
 func (s *Session) ResponseMID(mid uint64, v interface{}, errCode ...uint64) error {
@@ -119,18 +101,6 @@ func (s *Session) ResponseMID(mid uint64, v interface{}, errCode ...uint64) erro
 		err = errCode[0]
 	}
 	return s.entity.ResponseMid(mid, err, v)
-}
-
-// NewResponder captures the current request MID for later response.
-// Useful when business logic runs asynchronously.
-func (s *Session) NewResponder(mid uint64) *Responder { return &Responder{s: s, mid: mid} }
-
-// Response sends a response bound to captured MID.
-func (r *Responder) Response(v interface{}, errCode ...uint64) error {
-	if r == nil || r.s == nil {
-		return nil
-	}
-	return r.s.ResponseMID(r.mid, v, errCode...)
 }
 
 // // 发送错误给client
@@ -146,11 +116,6 @@ func (s *Session) ID() int64 {
 // UID returns uid that bind to current session
 func (s *Session) UID() int64 {
 	return atomic.LoadInt64(&s.uid)
-}
-
-// LastMid returns the last message id
-func (s *Session) LastMid() uint64 {
-	return s.entity.LastMid()
 }
 
 // Bind bind UID to current session

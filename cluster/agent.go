@@ -56,7 +56,6 @@ type (
 		// regular agent member
 		session  *session.Session    // session
 		conn     net.Conn            // low-level conn fd
-		lastMid  uint64              // last message id
 		state    int32               // current agent state
 		chDie    chan struct{}       // wait for close
 		chSend   chan pendingMessage // push message queue
@@ -108,11 +107,6 @@ func (a *agent) send(m pendingMessage) (err error) {
 	return
 }
 
-// LastMid implements the session.NetworkEntity interface
-func (a *agent) LastMid() uint64 {
-	return a.lastMid
-}
-
 // Push, implementation for session.NetworkEntity interface
 func (a *agent) Push(route string, v interface{}) error {
 	if a.status() == statusClosed {
@@ -155,12 +149,6 @@ func (a *agent) RPC(route string, v interface{}) error {
 	}
 	a.rpcHandler(a.session, msg, true)
 	return nil
-}
-
-// Response, implementation for session.NetworkEntity interface
-// Response message to session
-func (a *agent) Response(v interface{}, err uint64) error {
-	return a.ResponseMid(a.lastMid, err, v)
 }
 
 // ResponseMid, implementation for session.NetworkEntity interface

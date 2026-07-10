@@ -14,7 +14,6 @@ type acceptor struct {
 	sid        int64
 	gateClient clusterpb.MemberClient
 	session    *session.Session
-	lastMid    uint64
 	rpcHandler rpcHandler
 	gateAddr   string
 }
@@ -49,16 +48,6 @@ func (a *acceptor) RPC(route string, v interface{}) error {
 	}
 	a.rpcHandler(a.session, msg, true)
 	return nil
-}
-
-// LastMid implements the session.NetworkEntity interface
-func (a *acceptor) LastMid() uint64 {
-	return a.lastMid
-}
-
-// Response implements the session.NetworkEntity interface
-func (a *acceptor) Response(v interface{}, err uint64) error {
-	return a.ResponseMid(a.lastMid, err, v)
 }
 
 // ResponseMid implements the session.NetworkEntity interface

@@ -34,19 +34,19 @@ func (w *World) Init() {
 }
 
 // Enter was called when new guest enter
-func (w *World) Enter(s *session.Session, msg []byte) error {
-	w.Add(s)
+func (w *World) Enter(ctx *session.RequestContext, msg []byte) error {
+	w.Add(ctx.Session())
 	log.Println(fmt.Sprintf("session count: %d", w.Count()))
-	return s.Response(&protocol.EnterWorldResponse{ID: s.ID()})
+	return ctx.Response(&protocol.EnterWorldResponse{ID: ctx.ID()})
 }
 
 // Update refresh tadpole's position
-func (w *World) Update(s *session.Session, msg []byte) error {
+func (w *World) Update(ctx *session.RequestContext, msg []byte) error {
 	return w.Broadcast("update", msg)
 }
 
 // Message handler was used to communicate with each other
-func (w *World) Message(s *session.Session, msg *protocol.WorldMessage) error {
-	msg.ID = s.ID()
+func (w *World) Message(ctx *session.RequestContext, msg *protocol.WorldMessage) error {
+	msg.ID = ctx.ID()
 	return w.Broadcast("message", msg)
 }

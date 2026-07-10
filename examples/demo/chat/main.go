@@ -103,7 +103,8 @@ func (mgr *RoomManager) AfterInit() {
 }
 
 // Join room
-func (mgr *RoomManager) Join(s *session.Session, msg []byte) error {
+func (mgr *RoomManager) Join(ctx *session.RequestContext, msg []byte) error {
+	s := ctx.Session()
 	// NOTE: join test room only in demo
 	room, found := mgr.rooms[testRoomID]
 	if !found {
@@ -121,11 +122,12 @@ func (mgr *RoomManager) Join(s *session.Session, msg []byte) error {
 	room.group.Broadcast("onNewUser", &NewUser{Content: fmt.Sprintf("New user: %d", s.ID())})
 	// new user join group
 	room.group.Add(s) // add session to group
-	return s.Response(&JoinResponse{Result: "success"})
+	return ctx.Response(&JoinResponse{Result: "success"})
 }
 
 // Message sync last message to all members
-func (mgr *RoomManager) Message(s *session.Session, msg *UserMessage) error {
+func (mgr *RoomManager) Message(ctx *session.RequestContext, msg *UserMessage) error {
+	s := ctx.Session()
 	if !s.HasKey(roomIDKey) {
 		return fmt.Errorf("not join room yet")
 	}

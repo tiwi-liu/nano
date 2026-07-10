@@ -178,6 +178,17 @@ func WithScheduler(workers, backlog int) Option {
 	}
 }
 
+// WithRequestTimeout sets the maximum lifetime of an inbound handler request.
+// The timeout includes time spent waiting in the scheduler queue.
+func WithRequestTimeout(timeout time.Duration) Option {
+	if timeout <= 0 {
+		panic("request timeout must be greater than zero")
+	}
+	return func(opt *cluster.Options) {
+		opt.RequestTimeout = timeout
+	}
+}
+
 // WithUnregisterCallback master unregister member event call fn
 func WithUnregisterCallback(fn func(member cluster.Member)) Option {
 	return func(opt *cluster.Options) {

@@ -35,7 +35,8 @@ type ExistsMembersResponse struct {
 	Members string `json:"members"`
 }
 
-func (ts *TopicService) NewUser(s *session.Session, msg *protocol.NewUserRequest) error {
+func (ts *TopicService) NewUser(ctx *session.RequestContext, msg *protocol.NewUserRequest) error {
+	s := ctx.Session()
 	ts.nextUid++
 	uid := ts.nextUid
 	if err := s.Bind(uid); err != nil {
@@ -72,7 +73,7 @@ type UserBalanceResponse struct {
 	CurrentBalance int64 `json:"currentBalance"`
 }
 
-func (ts *TopicService) Stats(s *session.Session, msg *protocol.MasterStats) error {
+func (ts *TopicService) Stats(ctx *session.RequestContext, msg *protocol.MasterStats) error {
 	// It's OK to use map without lock because of this service running in main thread
 	user, found := ts.users[msg.Uid]
 	if !found {
@@ -80,7 +81,7 @@ func (ts *TopicService) Stats(s *session.Session, msg *protocol.MasterStats) err
 	}
 	user.message++
 	user.balance--
-	return s.Push("onBalance", &UserBalanceResponse{user.balance})
+	return ctx.Push("onBalance", &UserBalanceResponse{user.balance})
 }
 
 func (ts *TopicService) userDisconnected(s *session.Session) {

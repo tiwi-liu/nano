@@ -19,11 +19,11 @@ func NewManager() *Manager {
 }
 
 // Login handler was used to guest login
-func (m *Manager) Login(s *session.Session, msg *protocol.JoyLoginRequest) error {
+func (m *Manager) Login(ctx *session.RequestContext, msg *protocol.JoyLoginRequest) error {
 	log.Println(msg)
-	id := s.ID()
-	s.Bind(id)
-	return s.Response(protocol.LoginResponse{
+	id := ctx.ID()
+	ctx.Bind(id)
+	return ctx.Response(protocol.LoginResponse{
 		Status: protocol.LoginStatusSucc,
 		ID:     id,
 	})

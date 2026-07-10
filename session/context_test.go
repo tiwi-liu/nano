@@ -1,0 +1,129 @@
+package session
+
+import (
+	"context"
+	"errors"
+	"net"
+	"testing"
+	"time"
+)
+
+type requestContextTestEntity struct {
+	responses      map[uint64]interface{}
+	responseErrors map[uint64]uint64
+	pushes         map[string]interface{}
+}
+
+func newResponderTestEntity() *requestContextTestEntity {
+	return &requestContextTestEntity{
+		responses:      map[uint64]interface{}{},
+		responseErrors: map[uint64]uint64{},
+		pushes:         map[string]interface{}{},
+	}
+}
+
+func (e *requestContextTestEntity) Push(route string, v interface{}) error {
+	e.pushes[route] = v
+	return nil
+}
+
+func (e *requestContextTestEntity) RPC(string, interface{}) error { return nil }
+func (e *requestContextTestEntity) ResponseMid(mid uint64, errCode uint64, v interface{}) error {
+	e.responses[mid] = v
+	e.responseErrors[mid] = errCode
+	return nil
+}
+func (e *requestContextTestEntity) Close() error         { return nil }
+func (e *requestContextTestEntity) RemoteAddr() net.Addr { return nil }
+
+func TestRequestContextBindsResponseToCapturedMID(t *testing.T) {
+	entity := newResponderTestEntity()
+	s := New(entity)
+
+	first, cancelFirst := NewRequestContext(context.Background(), s, 1)
+	defer cancelFirst()
+	second, cancelSecond := NewRequestContext(context.Background(), s, 2)
+	defer cancelSecond()
+
+	if err := second.Response("second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Response("first"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := entity.responses[1]; got != "first" {
+		t.Fatalf("mid 1 response = %v, want first", got)
+	}
+	if got := entity.responses[2]; got != "second" {
+		t.Fatalf("mid 2 response = %v, want second", got)
+	}
+}
+
+func TestRequestContextPropagatesDeadline(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), time.Hour)
+	defer parentCancel()
+
+	ctx, cancel := NewRequestContext(parent, New(newResponderTestEntity()), 1)
+	defer cancel()
+
+	want, _ := parent.Deadline()
+	got, ok := ctx.Deadline()
+	if !ok || !got.Equal(want) {
+		t.Fatalf("deadline = %v, %v; want %v, true", got, ok, want)
+	}
+}
+
+func TestRequestContextRejectsResponseAfterCancellation(t *testing.T) {
+	entity := newResponderTestEntity()
+	ctx, cancel := NewRequestContext(context.Background(), New(entity), 1)
+	cancel()
+
+	if err := ctx.Response("late"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Response error = %v, want context.Canceled", err)
+	}
+	if len(entity.responses) != 0 {
+		t.Fatalf("responses = %v, want none", entity.responses)
+	}
+}
+
+func TestRequestContextRejectsResponseWithoutRequestMID(t *testing.T) {
+	ctx, cancel := NewRequestContext(context.Background(), New(newResponderTestEntity()), 0)
+	defer cancel()
+
+	if err := ctx.Response("invalid"); !errors.Is(err, ErrNotRequest) {
+		t.Fatalf("Response error = %v, want ErrNotRequest", err)
+	}
+}
+
+func TestRequestContextTimeoutResponseIsSentAtMostOnce(t *testing.T) {
+	entity := newResponderTestEntity()
+	ctx, cancel := NewRequestContext(context.Background(), New(entity), 7)
+	defer cancel()
+
+	if !ctx.ResponseTimeout(5) {
+		t.Fatal("first timeout response should be sent")
+	}
+	if ctx.ResponseTimeout(5) {
+		t.Fatal("second timeout response should be ignored")
+	}
+	if err := ctx.Response("late"); !errors.Is(err, ErrResponseAlreadySent) {
+		t.Fatalf("late response error = %v, want ErrResponseAlreadySent", err)
+	}
+	if got := entity.responseErrors[7]; got != 5 {
+		t.Fatalf("timeout error code = %d, want 5", got)
+	}
+}
+
+func TestRequestContextPushUsesSession(t *testing.T) {
+	entity := newResponderTestEntity()
+	ctx, cancel := NewRequestContext(context.Background(), New(entity), 1)
+	defer cancel()
+
+	if err := ctx.Push("UserService.Notify", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if got := entity.pushes["UserService.Notify"]; got != "hello" {
+		t.Fatalf("push payload = %v, want hello", got)
+	}
+}

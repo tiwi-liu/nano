@@ -26,18 +26,18 @@ type (
 	}
 )
 
-func (bs *RegisterService) Login(s *session.Session, msg *RegisterRequest) error {
+func (bs *RegisterService) Login(ctx *session.RequestContext, msg *RegisterRequest) error {
 	bs.nextGateUid++
 	uid := bs.nextGateUid
-	s.Bind(uid)
+	ctx.Bind(uid)
 	fmt.Println("Login uid:", uid)
 	chat := &protocol.JoinRoomRequest{
 		Nickname:  msg.Nickname,
 		GateUid:   uid,
 		MasterUid: uid,
 	}
-	if err := s.RPC("ChatRoomService.JoinRoom", chat); err != nil {
+	if err := ctx.RPC("ChatRoomService.JoinRoom", chat); err != nil {
 		return errors.Trace(err)
 	}
-	return s.Response(&RegisterResponse{})
+	return ctx.Response(&RegisterResponse{})
 }

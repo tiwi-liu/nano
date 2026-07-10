@@ -22,8 +22,8 @@ func newRoomService() *RoomService {
 	}
 }
 
-func (rs *RoomService) JoinRoom(s *session.Session, msg *protocol.JoinRoomRequest) error {
-	if err := s.Bind(msg.MasterUid); err != nil {
+func (rs *RoomService) JoinRoom(ctx *session.RequestContext, msg *protocol.JoinRoomRequest) error {
+	if err := ctx.Bind(msg.MasterUid); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -33,7 +33,7 @@ func (rs *RoomService) JoinRoom(s *session.Session, msg *protocol.JoinRoomReques
 	if err := rs.group.Broadcast("onNewUser", broadcast); err != nil {
 		return errors.Trace(err)
 	}
-	return rs.group.Add(s)
+	return rs.group.Add(ctx.Session())
 }
 
 type SyncMessage struct {
@@ -41,9 +41,9 @@ type SyncMessage struct {
 	Content string `json:"content"`
 }
 
-func (rs *RoomService) SyncMessage(s *session.Session, msg *SyncMessage) error {
+func (rs *RoomService) SyncMessage(ctx *session.RequestContext, msg *SyncMessage) error {
 	// Send an RPC to master server to stats
-	if err := s.RPC("TopicService.Stats", &protocol.MasterStats{Uid: s.UID()}); err != nil {
+	if err := ctx.RPC("TopicService.Stats", &protocol.MasterStats{Uid: ctx.UID()}); err != nil {
 		return errors.Trace(err)
 	}
 

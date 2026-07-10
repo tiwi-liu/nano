@@ -23,6 +23,8 @@ package mock
 import (
 	"fmt"
 	"net"
+
+	"github.com/lonng/nano/session"
 )
 
 // NetAddr mock the net.Addr interface
@@ -42,11 +44,12 @@ type message struct {
 // NetworkEntity represents an network entity which can be used to construct the
 // session object.
 type NetworkEntity struct {
-	messages  []message
-	responses []interface{}
-	msgmap    map[uint64]interface{}
-	rpcCall   []message
+	messages []message
+	msgmap   map[uint64]interface{}
+	rpcCall  []message
 }
+
+var _ session.NetworkEntity = (*NetworkEntity)(nil)
 
 // NewNetworkEntity returns an mock network entity
 func NewNetworkEntity() *NetworkEntity {
@@ -67,19 +70,8 @@ func (n *NetworkEntity) Push(route string, v interface{}) error {
 	return nil
 }
 
-// LastMid implements the session.NetworkEntity interface
-func (n *NetworkEntity) LastMid() uint64 {
-	return 1
-}
-
-// Response implements the session.NetworkEntity interface
-func (n *NetworkEntity) Response(v interface{}) error {
-	n.responses = append(n.responses, v)
-	return nil
-}
-
 // ResponseMid implements the session.NetworkEntity interface
-func (n *NetworkEntity) ResponseMid(mid uint64, v interface{}) error {
+func (n *NetworkEntity) ResponseMid(mid uint64, _ uint64, v interface{}) error {
 	_, found := n.msgmap[mid]
 	if found {
 		return fmt.Errorf("duplicated message id: %v", mid)
@@ -96,14 +88,6 @@ func (n *NetworkEntity) Close() error {
 // RemoteAddr implements the session.NetworkEntity interface
 func (n *NetworkEntity) RemoteAddr() net.Addr {
 	return NetAddr{}
-}
-
-// LastResponse returns the last respond message
-func (n *NetworkEntity) LastResponse() interface{} {
-	if len(n.responses) < 1 {
-		return nil
-	}
-	return n.responses[len(n.responses)-1]
 }
 
 // FindResponseByMID returns the response respective the message id

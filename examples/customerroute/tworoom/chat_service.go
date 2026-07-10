@@ -20,8 +20,8 @@ func newChatRoomService() *ChatRoomService {
 	}
 }
 
-func (rs *ChatRoomService) JoinRoom(s *session.Session, msg *protocol.JoinRoomRequest) error {
-	return rs.group.Add(s)
+func (rs *ChatRoomService) JoinRoom(ctx *session.RequestContext, msg *protocol.JoinRoomRequest) error {
+	return rs.group.Add(ctx.Session())
 }
 
 type SyncMessage struct {
@@ -29,7 +29,7 @@ type SyncMessage struct {
 	Content string `json:"content"`
 }
 
-func (rs *ChatRoomService) SyncMessage(s *session.Session, msg *SyncMessage) error {
+func (rs *ChatRoomService) SyncMessage(ctx *session.RequestContext, msg *SyncMessage) error {
 	// Sync message to all members in this room
 	return rs.group.Broadcast("onMessage", msg)
 }
