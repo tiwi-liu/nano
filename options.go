@@ -10,6 +10,7 @@ import (
 	"github.com/lonng/nano/internal/log"
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/pipeline"
+	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/serialize"
 	"github.com/lonng/nano/service"
 	"google.golang.org/grpc"
@@ -165,6 +166,15 @@ func WithHandshakeValidator(fn func([]byte) error) Option {
 func WithNodeId(nodeId uint64) Option {
 	return func(opt *cluster.Options) {
 		service.ResetNodeId(nodeId)
+	}
+}
+
+// WithScheduler configures the global scheduler concurrency and backlog.
+// - workers: number of worker goroutines processing tasks (<=0 means auto)
+// - backlog: buffered queue length for pending tasks (<=0 means default)
+func WithScheduler(workers, backlog int) Option {
+	return func(_ *cluster.Options) {
+		scheduler.Configure(workers, backlog)
 	}
 }
 

@@ -186,7 +186,7 @@ func Decode(data []byte) (*Message, error) {
 	offset := 1
 	m.Type = Type((flag >> 1) & msgTypeMask)
 	m.ErrCode = ErrCode(flag >> 4 & msgErrorCodeMask)
-	log.Println(" routeType:", m.Type, m.ErrCode)
+
 	if invalidType(m.Type) {
 		return nil, ErrWrongMessageType
 	}

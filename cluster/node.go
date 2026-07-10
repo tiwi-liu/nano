@@ -24,8 +24,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/lonng/nano/pkg/errcode"
+	"google.golang.org/grpc/metadata"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -331,15 +334,33 @@ func (n *Node) findOrCreateSession(sid int64, gateAddr string) (*session.Session
 	return s, nil
 }
 
-func (n *Node) HandleRequest(_ context.Context, req *clusterpb.RequestMessage) (*clusterpb.MemberHandleResponse, error) {
-	handler, found := n.handler.localHandlers[req.Route]
-	if !found {
-		return nil, fmt.Errorf("service not found in current node: %v", req.Route)
+func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage) (*clusterpb.MemberHandleResponse, error) {
+	var uid int64 = 0
+	values := metadata.ValueFromIncomingContext(ctx, "uid")
+	for _, value := range values {
+		// 处理每个值
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			uid = num
+		}
+		if env.Debug {
+			fmt.Printf("HandleRequest uid=>%v \n", value)
+		}
 	}
 	s, err := n.findOrCreateSession(req.SessionId, req.GateAddr)
+	if uid > 0 {
+		s.Bind(uid)
+	}
 	if err != nil {
+		fmt.Printf("findOrCreateSession uid=>%v \n", err)
 		return nil, err
 	}
+	handler, found := n.handler.localHandlers[req.Route]
+	if !found {
+		s.ResponseMID(req.Id, nil, errcode.CodeMethodNotFound)
+		return nil, fmt.Errorf("service not found in current node: %v", req.Route)
+	}
+
 	msg := &message.Message{
 		Type:  message.Request,
 		ID:    req.Id,
@@ -350,7 +371,14 @@ func (n *Node) HandleRequest(_ context.Context, req *clusterpb.RequestMessage) (
 	return &clusterpb.MemberHandleResponse{}, nil
 }
 
-func (n *Node) HandleNotify(_ context.Context, req *clusterpb.NotifyMessage) (*clusterpb.MemberHandleResponse, error) {
+func (n *Node) HandleNotify(ctx context.Context, req *clusterpb.NotifyMessage) (*clusterpb.MemberHandleResponse, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		uid := md["uid"]
+		if env.Debug {
+			fmt.Printf("HandleNotify uid=>%v \n", uid)
+		}
+	}
 	handler, found := n.handler.localHandlers[req.Route]
 	if !found {
 		return nil, fmt.Errorf("service not found in current node: %v", req.Route)
@@ -368,6 +396,7 @@ func (n *Node) HandleNotify(_ context.Context, req *clusterpb.NotifyMessage) (*c
 	return &clusterpb.MemberHandleResponse{}, nil
 }
 
+// 网关接受来之其他节点的中继Push
 func (n *Node) HandlePush(_ context.Context, req *clusterpb.PushMessage) (*clusterpb.MemberHandleResponse, error) {
 	s := n.findSession(req.SessionId)
 	if s == nil {
@@ -376,6 +405,7 @@ func (n *Node) HandlePush(_ context.Context, req *clusterpb.PushMessage) (*clust
 	return &clusterpb.MemberHandleResponse{}, s.Push(req.Route, req.Data)
 }
 
+// 网关接受来之其他节点的中继Response
 func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage) (*clusterpb.MemberHandleResponse, error) {
 	s := n.findSession(req.SessionId)
 	if s == nil {

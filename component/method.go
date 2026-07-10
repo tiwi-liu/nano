@@ -32,6 +32,7 @@ var (
 	typeOfError   = reflect.TypeOf((*error)(nil)).Elem()
 	typeOfBytes   = reflect.TypeOf(([]byte)(nil))
 	typeOfSession = reflect.TypeOf(session.New(nil))
+	typeOfResponder = reflect.TypeOf(&session.Responder{})
 )
 
 func isExported(name string) bool {
@@ -56,9 +57,10 @@ func isHandlerMethod(method reflect.Method) bool {
 		return false
 	}
 
-	// Method needs three ins: receiver, *Session, []byte or pointer.
-	//四个形参，receiver，Session，[]byte or pointer,MID
-	if mt.NumIn() != 4 {
+	// Method needs either:
+	// 1) receiver, *Session, []byte|*Req
+	// 2) receiver, *Session, []byte|*Req, mid
+	if mt.NumIn() != 3 && mt.NumIn() != 4 {
 		return false
 	}
 
@@ -78,8 +80,15 @@ func isHandlerMethod(method reflect.Method) bool {
 		return false
 	}
 
-	//校验mid，如果是notify，则为0
-	if mt.In(3).Kind() != reflect.Uint64 {
+	// Optional 4th argument: legacy mid or responder
+	if mt.NumIn() == 4 {
+		t4 := mt.In(3)
+		if t4.Kind() == reflect.Uint64 {
+			return true
+		}
+		if t4 == typeOfResponder {
+			return true
+		}
 		return false
 	}
 

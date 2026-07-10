@@ -22,7 +22,9 @@ package scheduler
 
 import (
 	"fmt"
+	"runtime"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,6 +52,8 @@ var (
 	chTasks = make(chan Task, 1<<8)
 	started int32
 	closed  int32
+
+	workerCnt int32 // must be configured before Sched
 )
 
 func try(f func()) {
@@ -61,29 +65,71 @@ func try(f func()) {
 	f()
 }
 
+// Configure sets scheduler worker count and task backlog.
+// It must be called before Sched() starts, otherwise it has no effect.
+func Configure(workers, backlog int) {
+	if atomic.LoadInt32(&started) != 0 {
+		return
+	}
+	if workers > 0 {
+		atomic.StoreInt32(&workerCnt, int32(workers))
+	}
+	if backlog > 0 {
+		chTasks = make(chan Task, backlog)
+	}
+}
+
 func Sched() {
 	if atomic.AddInt32(&started, 1) != 1 {
 		return
 	}
 
-	ticker := time.NewTicker(env.TimerPrecision)
-	defer func() {
-		ticker.Stop()
-		close(chExit)
-	}()
-
-	for {
-		select {
-		case <-ticker.C:
-			cron()
-
-		case f := <-chTasks:
-			try(f)
-
-		case <-chDie:
-			return
+	wc := int(atomic.LoadInt32(&workerCnt))
+	if wc <= 0 {
+		wc = runtime.GOMAXPROCS(0)
+		if wc <= 0 {
+			wc = 1
 		}
 	}
+
+	var wg sync.WaitGroup
+
+	// timer loop (single goroutine)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(env.TimerPrecision)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cron()
+			case <-chDie:
+				return
+			}
+		}
+	}()
+
+	// task workers
+	for i := 0; i < wc; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case f := <-chTasks:
+					if f != nil {
+						try(f)
+					}
+				case <-chDie:
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(chExit)
 }
 
 func Close() {
@@ -97,4 +143,14 @@ func Close() {
 
 func PushTask(task Task) {
 	chTasks <- task
+}
+
+// TryPushTask tries to enqueue task without blocking. It returns false if the queue is full.
+func TryPushTask(task Task) bool {
+	select {
+	case chTasks <- task:
+		return true
+	default:
+		return false
+	}
 }

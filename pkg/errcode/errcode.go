@@ -14,7 +14,8 @@ const (
 	CodeNetworkException   = 9
 	CodeServiceUnavailable = 10
 	CodeQueueNotFund       = 11
-	CodeInternal           = 12
+	CodeProtoParseFail     = 12
 	CodeAsyncReturn        = 13
 	CodeUnknown            = 14
+	CodeServerBusy         = 15
 )

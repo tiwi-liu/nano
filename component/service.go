@@ -23,6 +23,8 @@ package component
 import (
 	"errors"
 	"reflect"
+
+	"github.com/lonng/nano/session"
 )
 
 type (
@@ -32,6 +34,8 @@ type (
 		Method   reflect.Method // method stub
 		Type     reflect.Type   // arg type of method
 		IsRawArg bool           // whether the data need to unserialize
+		HasMID   bool           // whether handler signature contains legacy mid
+		HasResponder bool       // whether handler signature contains *session.Responder
 	}
 
 	// Service implements a specific service, some of it's methods will be
@@ -79,11 +83,21 @@ func (s *Service) suitableHandlerMethods(typ reflect.Type) map[string]*Handler {
 			if mt.In(2) == typeOfBytes {
 				raw = true
 			}
+			hasMID := false
+			hasResponder := false
+			if mt.NumIn() == 4 {
+				t4 := mt.In(3)
+				if t4.Kind() == reflect.Uint64 {
+					hasMID = true
+				} else if t4 == reflect.TypeOf(&session.Responder{}) {
+					hasResponder = true
+				}
+			}
 			// rewrite handler name
 			if s.Options.nameFunc != nil {
 				mn = s.Options.nameFunc(mn)
 			}
-			methods[mn] = &Handler{Method: method, Type: mt.In(2), IsRawArg: raw}
+			methods[mn] = &Handler{Method: method, Type: mt.In(2), IsRawArg: raw, HasMID: hasMID, HasResponder: hasResponder}
 		}
 	}
 	return methods

@@ -60,6 +60,13 @@ type Session struct {
 	router       *Router
 }
 
+// Responder binds a request message ID to simplify async responses.
+// It allows business code to respond later without carrying raw mid values.
+type Responder struct {
+	s   *Session
+	mid uint64
+}
+
 // New returns a new session instance
 // a NetworkEntity is a low-level network instance
 func New(entity NetworkEntity) *Session {
@@ -104,11 +111,26 @@ func (s *Session) Response(v interface{}, errCode ...uint64) error {
 // ResponseMID responses message to client, mid is
 // request message ID
 func (s *Session) ResponseMID(mid uint64, v interface{}, errCode ...uint64) error {
+	if mid <= 0 {
+		return nil
+	}
 	var err uint64 = 0
 	if len(errCode) == 1 {
 		err = errCode[0]
 	}
 	return s.entity.ResponseMid(mid, err, v)
+}
+
+// NewResponder captures the current request MID for later response.
+// Useful when business logic runs asynchronously.
+func (s *Session) NewResponder(mid uint64) *Responder { return &Responder{s: s, mid: mid} }
+
+// Response sends a response bound to captured MID.
+func (r *Responder) Response(v interface{}, errCode ...uint64) error {
+	if r == nil || r.s == nil {
+		return nil
+	}
+	return r.s.ResponseMID(r.mid, v, errCode...)
 }
 
 // // 发送错误给client

@@ -25,10 +25,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/lonng/nano/pkg/errcode"
+	"google.golang.org/grpc/metadata"
 	"math/rand"
 	"net"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -329,6 +331,9 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	index := strings.LastIndex(msg.Route, ".")
 	if index < 0 {
 		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
+		if msg.Type == message.Request {
+			session.ResponseMID(msg.ID, nil, errcode.CodeBadRequest)
+		}
 		return
 	}
 
@@ -336,7 +341,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	members := h.findMembers(service)
 	if len(members) == 0 {
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeMethodNotFound)
+			session.ResponseMID(msg.ID, nil, errcode.CodeServiceNotFound)
 		}
 		log.Println(fmt.Sprintf("nano/handler: %s not found(forgot registered?)", msg.Route))
 		return
@@ -370,6 +375,9 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	pool, err := h.currentNode.rpcClient.getConnPool(remoteAddr)
 	if err != nil {
 		log.Println(err)
+		if msg.Type == message.Request {
+			session.ResponseMID(msg.ID, nil, errcode.CodeInternalErr)
+		}
 		return
 	}
 	var data = msg.Data
@@ -388,6 +396,8 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	}
 
 	client := clusterpb.NewMemberClient(pool.Get())
+	md := metadata.Pairs("uid", strconv.FormatInt(session.UID(), 10))
+	ctx := metadata.NewOutgoingContext(context.Background(), md)
 	switch msg.Type {
 	case message.Request:
 		request := &clusterpb.RequestMessage{
@@ -397,7 +407,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 			Route:     msg.Route,
 			Data:      data,
 		}
-		_, err = client.HandleRequest(context.Background(), request)
+		_, err = client.HandleRequest(ctx, request)
 	case message.Notify:
 		request := &clusterpb.NotifyMessage{
 			GateAddr:  gateAddr,
@@ -405,9 +415,12 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 			Route:     msg.Route,
 			Data:      data,
 		}
-		_, err = client.HandleNotify(context.Background(), request)
+		_, err = client.HandleNotify(ctx, request)
 	}
 	if err != nil {
+		if msg.Type == message.Request {
+			session.ResponseMID(msg.ID, nil, errcode.CodeInternalErr)
+		}
 		log.Println(fmt.Sprintf("Process remote message (%d:%s) error: %+v", msg.ID, msg.Route, err))
 	}
 }
@@ -446,10 +459,21 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		err := pipe.Inbound().Process(session, msg)
 		if err != nil {
 			log.Println("Pipeline process failed: " + err.Error())
+			if msg.Type == message.Request {
+				session.ResponseMID(lastMid, nil, errcode.CodeProtoParseFail)
+			}
 			return
 		}
 	}
 
+	index := strings.LastIndex(msg.Route, ".")
+	if index < 0 {
+		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
+		if msg.Type == message.Request {
+			session.ResponseMID(lastMid, nil, errcode.CodeMethodNotFound)
+		}
+		return
+	}
 	var payload = msg.Data
 	var data interface{}
 	if handler.IsRawArg {
@@ -458,6 +482,9 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		data = reflect.New(handler.Type.Elem()).Interface()
 		err := env.Serializer.Unmarshal(payload, data)
 		if err != nil {
+			if msg.Type == message.Request {
+				session.ResponseMID(lastMid, nil, errcode.CodeProtoParseFail)
+			}
 			log.Println(fmt.Sprintf("Deserialize to %T failed: %+v (%v)", data, err, payload))
 			return
 		}
@@ -467,27 +494,19 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		log.Println(fmt.Sprintf("UID=%d, Message={%s}, Data=%+v", session.UID(), msg.String(), data))
 	}
 
-	args := []reflect.Value{handler.Receiver, reflect.ValueOf(session), reflect.ValueOf(data), reflect.ValueOf(lastMid)}
+	args := []reflect.Value{handler.Receiver, reflect.ValueOf(session), reflect.ValueOf(data)}
+	if handler.HasMID {
+		args = append(args, reflect.ValueOf(lastMid))
+	} else if handler.HasResponder {
+		args = append(args, reflect.ValueOf(session.NewResponder(lastMid)))
+	}
 	task := func() {
-		switch v := session.NetworkEntity().(type) {
-		case *agent:
-			v.lastMid = lastMid
-		case *acceptor:
-			v.lastMid = lastMid
-		}
-
 		result := handler.Method.Func.Call(args)
 		if len(result) > 0 {
 			if err := result[0].Interface(); err != nil {
 				log.Println(fmt.Sprintf("Service %s error: %+v", msg.Route, err))
 			}
 		}
-	}
-
-	index := strings.LastIndex(msg.Route, ".")
-	if index < 0 {
-		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
-		return
 	}
 
 	// A message can be dispatch to global thread or a user customized thread
@@ -508,7 +527,11 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		}
 		local.Schedule(task)
 	} else {
-		log.Println("nano/handler: scheduler.PushTask")
-		scheduler.PushTask(task)
+		if !scheduler.TryPushTask(task) {
+			if msg.Type == message.Request {
+				session.ResponseMID(lastMid, nil, errcode.CodeServerBusy)
+			}
+			// For Notify, drop on overload to avoid blocking caller.
+		}
 	}
 }
