@@ -66,6 +66,17 @@ message PushMessage {
 
 message MemberHandleResponse {}
 
+message InternalCallRequest {
+    string route = 1;
+    bytes data = 2;
+    int64 uid = 3;
+}
+
+message InternalCallResponse {
+    bytes data = 1;
+    uint64 errCode = 2;
+}
+
 message NewMemberRequest {
     MemberInfo memberInfo = 1;
 }
@@ -91,6 +102,7 @@ message CloseSessionRequest {
 message CloseSessionResponse {}
 
 service Member {
+    rpc Call (InternalCallRequest) returns (InternalCallResponse) {}
     rpc HandleRequest (RequestMessage) returns (MemberHandleResponse) {}
     rpc HandleNotify (NotifyMessage) returns (MemberHandleResponse) {}
     rpc HandlePush (PushMessage) returns (MemberHandleResponse) {}

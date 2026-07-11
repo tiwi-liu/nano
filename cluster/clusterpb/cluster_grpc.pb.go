@@ -195,6 +195,7 @@ var Master_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	Member_Call_FullMethodName           = "/clusterpb.Member/Call"
 	Member_HandleRequest_FullMethodName  = "/clusterpb.Member/HandleRequest"
 	Member_HandleNotify_FullMethodName   = "/clusterpb.Member/HandleNotify"
 	Member_HandlePush_FullMethodName     = "/clusterpb.Member/HandlePush"
@@ -209,6 +210,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MemberClient interface {
+	Call(ctx context.Context, in *InternalCallRequest, opts ...grpc.CallOption) (*InternalCallResponse, error)
 	HandleRequest(ctx context.Context, in *RequestMessage, opts ...grpc.CallOption) (*MemberHandleResponse, error)
 	HandleNotify(ctx context.Context, in *NotifyMessage, opts ...grpc.CallOption) (*MemberHandleResponse, error)
 	HandlePush(ctx context.Context, in *PushMessage, opts ...grpc.CallOption) (*MemberHandleResponse, error)
@@ -225,6 +227,16 @@ type memberClient struct {
 
 func NewMemberClient(cc grpc.ClientConnInterface) MemberClient {
 	return &memberClient{cc}
+}
+
+func (c *memberClient) Call(ctx context.Context, in *InternalCallRequest, opts ...grpc.CallOption) (*InternalCallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InternalCallResponse)
+	err := c.cc.Invoke(ctx, Member_Call_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *memberClient) HandleRequest(ctx context.Context, in *RequestMessage, opts ...grpc.CallOption) (*MemberHandleResponse, error) {
@@ -311,6 +323,7 @@ func (c *memberClient) CloseSession(ctx context.Context, in *CloseSessionRequest
 // All implementations should embed UnimplementedMemberServer
 // for forward compatibility.
 type MemberServer interface {
+	Call(context.Context, *InternalCallRequest) (*InternalCallResponse, error)
 	HandleRequest(context.Context, *RequestMessage) (*MemberHandleResponse, error)
 	HandleNotify(context.Context, *NotifyMessage) (*MemberHandleResponse, error)
 	HandlePush(context.Context, *PushMessage) (*MemberHandleResponse, error)
@@ -327,6 +340,10 @@ type MemberServer interface {
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
 type UnimplementedMemberServer struct{}
+
+func (UnimplementedMemberServer) Call(context.Context, *InternalCallRequest) (*InternalCallResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Call not implemented")
+}
 
 func (UnimplementedMemberServer) HandleRequest(context.Context, *RequestMessage) (*MemberHandleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleRequest not implemented")
@@ -370,6 +387,24 @@ func RegisterMemberServer(s grpc.ServiceRegistrar, srv MemberServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Member_ServiceDesc, srv)
+}
+
+func _Member_Call_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InternalCallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemberServer).Call(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Member_Call_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemberServer).Call(ctx, req.(*InternalCallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Member_HandleRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -523,6 +558,10 @@ var Member_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "clusterpb.Member",
 	HandlerType: (*MemberServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Call",
+			Handler:    _Member_Call_Handler,
+		},
 		{
 			MethodName: "HandleRequest",
 			Handler:    _Member_HandleRequest_Handler,

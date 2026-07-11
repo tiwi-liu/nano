@@ -17,6 +17,12 @@ type requestContextTestEntity struct {
 	pushes         map[string]interface{}
 }
 
+type internalCallerFunc func(context.Context, int64, string, interface{}, interface{}) error
+
+func (f internalCallerFunc) Call(ctx context.Context, uid int64, route string, request, response interface{}) error {
+	return f(ctx, uid, route, request, response)
+}
+
 func newResponderTestEntity() *requestContextTestEntity {
 	return &requestContextTestEntity{
 		responses:      map[uint64]interface{}{},
@@ -158,5 +164,33 @@ func TestRequestContextPushUsesSession(t *testing.T) {
 	}
 	if got := entity.pushes["UserService.Notify"]; got != "hello" {
 		t.Fatalf("push payload = %v, want hello", got)
+	}
+}
+
+func TestRequestContextCallPropagatesContextAndUID(t *testing.T) {
+	s := New(newResponderTestEntity())
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	caller := internalCallerFunc(func(ctx context.Context, uid int64, route string, request, response interface{}) error {
+		called = true
+		if uid != 100 || route != "WalletService.GetBalance" {
+			t.Fatalf("call identity = (%d, %s)", uid, route)
+		}
+		if ctx.Err() != nil {
+			t.Fatal(ctx.Err())
+		}
+		*response.(*string) = "x"
+		return nil
+	})
+	ctx, cancel := NewRequestContext(context.Background(), s, 1, caller)
+	defer cancel()
+	response := ""
+	if err := ctx.Call("WalletService.GetBalance", "request", &response); err != nil {
+		t.Fatal(err)
+	}
+	if !called || response != "x" {
+		t.Fatalf("called=%v response=%q", called, response)
 	}
 }

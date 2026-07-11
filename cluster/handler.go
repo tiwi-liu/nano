@@ -112,13 +112,65 @@ type LocalHandler struct {
 	currentNode *Node
 }
 
+type InternalCallError struct {
+	Code errcode.Code
+}
+
+func (e *InternalCallError) Error() string {
+	return fmt.Sprintf("internal call failed with system code %d", e.Code)
+}
+
+func (h *LocalHandler) Call(ctx context.Context, uid int64, route string, request, response interface{}) error {
+	index := strings.LastIndex(route, ".")
+	if index < 1 || response == nil {
+		return &InternalCallError{Code: errcode.CodeBadRequest}
+	}
+	data, err := message.Serialize(request)
+	if err != nil {
+		return err
+	}
+	callRequest := &clusterpb.InternalCallRequest{Route: route, Data: data, Uid: uid}
+
+	var callResponse *clusterpb.InternalCallResponse
+	if _, local := h.localHandlers[route]; local {
+		callResponse, err = h.currentNode.Call(ctx, callRequest)
+	} else {
+		service := route[:index]
+		members := h.findMembers(service)
+		if len(members) == 0 {
+			return &InternalCallError{Code: errcode.CodeServiceNotFound}
+		}
+		member := members[rand.Intn(len(members))]
+		pool, poolErr := h.currentNode.rpcClient.getConnPool(member.ServiceAddr)
+		if poolErr != nil {
+			return poolErr
+		}
+		callResponse, err = clusterpb.NewMemberClient(pool.Get()).Call(ctx, callRequest)
+	}
+	if err != nil {
+		return err
+	}
+	code, ok := errcode.FromWire(callResponse.ErrCode)
+	if !ok {
+		code = errcode.CodeUnknown
+	}
+	if code != errcode.CodeOk {
+		return &InternalCallError{Code: code}
+	}
+	if raw, ok := response.(*[]byte); ok {
+		*raw = append((*raw)[:0], callResponse.Data...)
+		return nil
+	}
+	return env.Serializer.Unmarshal(callResponse.Data, response)
+}
+
 func (h *LocalHandler) newRequestContext(s *session.Session, mid uint64) (*session.RequestContext, context.CancelFunc) {
 	timeout := h.currentNode.RequestTimeout
 	if timeout <= 0 {
 		timeout = DefaultRequestTimeout
 	}
 	parent, parentCancel := context.WithTimeout(context.Background(), timeout)
-	ctx, cancel := session.NewRequestContext(parent, s, mid)
+	ctx, cancel := session.NewRequestContext(parent, s, mid, h)
 	return ctx, func() {
 		cancel()
 		parentCancel()

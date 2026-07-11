@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -335,6 +336,48 @@ func (n *Node) findOrCreateSession(sid int64, gateAddr string) (*session.Session
 		n.mu.Unlock()
 	}
 	return s, nil
+}
+
+func (n *Node) Call(ctx context.Context, req *clusterpb.InternalCallRequest) (*clusterpb.InternalCallResponse, error) {
+	response := &clusterpb.InternalCallResponse{ErrCode: uint64(errcode.CodeOk)}
+	if req == nil || req.Route == "" || req.Uid < 0 {
+		response.ErrCode = uint64(errcode.CodeBadRequest)
+		return response, nil
+	}
+	handler, found := n.handler.localHandlers[req.Route]
+	if !found {
+		response.ErrCode = uint64(errcode.CodeMethodNotFound)
+		return response, nil
+	}
+
+	var data interface{}
+	if handler.IsRawArg {
+		data = req.Data
+	} else {
+		data = reflect.New(handler.Type.Elem()).Interface()
+		if err := env.Serializer.Unmarshal(req.Data, data); err != nil {
+			response.ErrCode = uint64(errcode.CodeProtoParseFail)
+			return response, nil
+		}
+	}
+
+	var sendErr error
+	requestContext, cancel := session.NewInternalRequestContext(ctx, req.Uid, n.handler, func(value interface{}, code errcode.Code) error {
+		response.ErrCode = uint64(code)
+		if code != errcode.CodeOk {
+			response.Data = nil
+			return nil
+		}
+		response.Data, sendErr = message.Serialize(value)
+		return sendErr
+	})
+	defer cancel()
+	args := []reflect.Value{handler.Receiver, reflect.ValueOf(requestContext), reflect.ValueOf(data)}
+	invokeHandler(handler, args, requestContext, &message.Message{Type: message.Request, Route: req.Route})
+	if sendErr != nil {
+		return nil, sendErr
+	}
+	return response, nil
 }
 
 func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage) (*clusterpb.MemberHandleResponse, error) {
