@@ -467,14 +467,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 		copy(data, msg.Data)
 	}
 
-	// Retrieve gate address and session id
-	gateAddr := h.currentNode.ServiceAddr
-	sessionId := session.ID()
-	switch v := session.NetworkEntity().(type) {
-	case *acceptor:
-		gateAddr = v.gateAddr
-		sessionId = v.sid
-	}
+	gateAddr, sessionId := h.gatewayRoute(session)
 
 	client := clusterpb.NewMemberClient(pool.Get())
 	ctx, cancel := h.currentNode.rpcContext(context.Background(), "uid", strconv.FormatInt(session.UID(), 10))
@@ -504,6 +497,17 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 		}
 		log.Println(fmt.Sprintf("Process remote message (%d:%s) error: %+v", msg.ID, msg.Route, err))
 	}
+}
+
+func (h *LocalHandler) gatewayRoute(s *session.Session) (string, int64) {
+	gateAddr := h.currentNode.memberAddr()
+	sessionId := s.ID()
+	switch v := s.NetworkEntity().(type) {
+	case *acceptor:
+		gateAddr = v.gateAddr
+		sessionId = v.sid
+	}
+	return gateAddr, sessionId
 }
 
 func (h *LocalHandler) processMessage(agent *agent, msg *message.Message) {

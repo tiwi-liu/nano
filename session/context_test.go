@@ -15,6 +15,7 @@ type requestContextTestEntity struct {
 	responses      map[uint64]interface{}
 	responseErrors map[uint64]uint64
 	pushes         map[string]interface{}
+	sendErr        error
 }
 
 type internalCallerFunc func(context.Context, int64, string, interface{}, interface{}) error
@@ -38,6 +39,9 @@ func (e *requestContextTestEntity) Push(route string, v interface{}) error {
 
 func (e *requestContextTestEntity) RPC(string, interface{}) error { return nil }
 func (e *requestContextTestEntity) SendResponse(mid uint64, code errcode.Code, v interface{}) error {
+	if e.sendErr != nil {
+		return e.sendErr
+	}
 	e.responses[mid] = v
 	e.responseErrors[mid] = uint64(code)
 	return nil
@@ -132,6 +136,28 @@ func TestRequestContextRejectsResponseWithoutRequestMID(t *testing.T) {
 
 	if err := ctx.Response("invalid"); !errors.Is(err, ErrNotRequest) {
 		t.Fatalf("Response error = %v, want ErrNotRequest", err)
+	}
+}
+
+func TestRequestContextDoesNotMarkRespondedWhenSendFails(t *testing.T) {
+	entity := newResponderTestEntity()
+	entity.sendErr = errors.New("send unavailable")
+	ctx, cancel := NewRequestContext(context.Background(), New(entity), 7)
+	defer cancel()
+
+	if err := ctx.Response("body"); err == nil {
+		t.Fatal("Response error = nil, want send error")
+	}
+	if ctx.Responded() {
+		t.Fatal("failed response should not mark request as responded")
+	}
+
+	entity.sendErr = nil
+	if !ctx.RespondSystemError(errcode.CodeInternalErr) {
+		t.Fatal("system error should be sent after failed business response")
+	}
+	if got := entity.responseErrors[7]; got != uint64(errcode.CodeInternalErr) {
+		t.Fatalf("system error code = %d, want CodeInternalErr", got)
 	}
 }
 

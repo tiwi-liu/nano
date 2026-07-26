@@ -21,16 +21,22 @@ type InternalCaller interface {
 
 type ResponseSender func(value interface{}, code errcode.Code) error
 
+const (
+	responseOpen int32 = iota
+	responseSending
+	responseSent
+)
+
 // RequestContext owns the lifetime and capabilities of one inbound request.
 // It can be passed directly to APIs that accept context.Context.
 type RequestContext struct {
 	context.Context
-	session   *Session
-	mid       uint64
-	uid       atomic.Int64
-	responded atomic.Bool
-	caller    InternalCaller
-	sender    ResponseSender
+	session       *Session
+	mid           uint64
+	uid           atomic.Int64
+	responseState atomic.Int32
+	caller        InternalCaller
+	sender        ResponseSender
 }
 
 func NewRequestContext(parent context.Context, s *Session, mid uint64, callers ...InternalCaller) (*RequestContext, context.CancelFunc) {
@@ -95,25 +101,34 @@ func (c *RequestContext) Response(v interface{}) error {
 	if err := c.Err(); err != nil {
 		return err
 	}
-	if !c.responded.CompareAndSwap(false, true) {
+	if !c.responseState.CompareAndSwap(responseOpen, responseSending) {
 		return ErrResponseAlreadySent
 	}
-	return c.sender(v, errcode.CodeOk)
+	if err := c.sender(v, errcode.CodeOk); err != nil {
+		c.responseState.Store(responseOpen)
+		return err
+	}
+	c.responseState.Store(responseSent)
+	return nil
 }
 
 // RespondSystemError sends a header-only system error if no response has been
 // sent. Framework dispatch code owns this operation; business handlers should
 // describe their errors in the response body instead.
 func (c *RequestContext) RespondSystemError(code errcode.Code) bool {
-	if c == nil || c.sender == nil || !c.responded.CompareAndSwap(false, true) {
+	if c == nil || c.sender == nil || !c.responseState.CompareAndSwap(responseOpen, responseSending) {
 		return false
 	}
-	_ = c.sender(nil, code)
+	if err := c.sender(nil, code); err != nil {
+		c.responseState.Store(responseOpen)
+		return false
+	}
+	c.responseState.Store(responseSent)
 	return true
 }
 
 func (c *RequestContext) Responded() bool {
-	return c != nil && c.responded.Load()
+	return c != nil && c.responseState.Load() == responseSent
 }
 
 func (c *RequestContext) Push(route string, v interface{}) error {

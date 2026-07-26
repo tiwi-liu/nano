@@ -35,6 +35,8 @@ client tcp/ws
 | `internal/message` | request/notify/response/push 消息编解码 |
 | `pipeline` | 入站/出站消息扩展点 |
 | `serialize` | JSON / protobuf 序列化 |
+| `registry` | 注册中心契约、成员状态、租约生命周期和可路由成员视图；不绑定具体后端 |
+| `nano-contrib`（独立 module） | 可选 etcd、OpenTelemetry、Prometheus 适配器，不属于 nano 核心依赖 |
 
 当前已经完成的较好设计：
 
@@ -62,12 +64,18 @@ client tcp/ws
 - WebSocket server 改为节点私有 `ServeMux` 和 `http.Server`，Shutdown 时可关闭。
 - README 和入门文档中的旧 `*session.Session` Handler 示例已更新为 `*session.RequestContext`。
 - gameServer 已接入 `NANO_CLUSTER_AUTH_TOKEN`，生产节点配置同一个环境变量即可启用集群 token 鉴权。
+- 新增 `registry.Registry`、`registry.Runtime` 和 `registry.View`，注册中心契约从业务工程下沉到框架。
+- 新增 `WithUnaryServerInterceptors`、`WithUnaryClientInterceptors`，集群认证、Trace、指标可以通过 gRPC interceptor 组合。
+- etcd、OpenTelemetry 和 Prometheus 实现移入独立的 `nano-contrib` module，nano 核心不直接增加基础设施依赖。
+- gameServer 的跨节点 gRPC 已接入 W3C Trace Context 注入和提取；业务 span 和业务指标仍由业务工程维护。
 
 仍需部署侧配合：
 
 - 生产集群必须配置 `NANO_CLUSTER_AUTH_TOKEN` 或显式调用 `WithClusterAuthToken`，否则框架保持兼容模式，不强制鉴权。
 - 生产集群仍应优先使用内网 ServiceAddr，必要时继续接入 mTLS。
 - gameServer 应显式配置 `WithScheduler(workers, backlog)`，不要依赖默认队列容量。
+- etcd 当前只负责注册、租约、节点热退休和 readiness；nano master 仍负责真实成员分发和跨节点路由，不能直接停用 master。
+- `nano` 与 `nano-contrib` 尚未发布包含新接口的正式版本前，工作区通过 `replace` 使用本地 module；正式发版必须先发布 nano，再发布 nano-contrib。
 
 ## 主要问题
 

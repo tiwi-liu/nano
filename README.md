@@ -40,6 +40,11 @@ Nano contains built-in distributed system solution, and make you creating a dist
 
 See: [The distributed chat demo](https://github.com/lonng/nano/tree/master/examples/cluster)
 
+Nano also defines backend-neutral service registry contracts and composable gRPC
+interceptor extension points. Infrastructure-specific implementations such as etcd,
+OpenTelemetry, and Prometheus live in the optional `nano-contrib` module, keeping the
+core framework lightweight. See [Service governance and observability](./docs/service_governance_zh_CN.md).
+
 The Nano will remain simple, but you can perform any operations in the component and get the desired goals. You can startup a group of `Nano` application as agent to dispatch message to backend servers.
 
 #### How to execute the asynchronous task
@@ -68,6 +73,7 @@ func (manager *PlayerManager) Login(ctx *session.RequestContext, msg *ReqPlayerL
     + [Communication protocol](./docs/communication_protocol.md)
     + [Design patterns](./docs/design_patterns.md)
     + [Framework architecture review](./docs/framework_architecture_review.md)
+    + [Service governance and observability](./docs/service_governance_zh_CN.md)
     + [API Reference(Server)](https://godoc.org/github.com/lonnng/nano)
     + [How to integrate `Lua` into `Nano` component(incomplete)](.)
 
@@ -76,6 +82,7 @@ func (manager *PlayerManager) Login(ctx *session.RequestContext, msg *ReqPlayerL
     + [路由压缩](./docs/route_compression_zh_CN.md)
     + [通信协议](./docs/communication_protocol_zh_CN.md)
     + [框架架构 Review](./docs/framework_architecture_review.md)
+    + [服务治理与可观测性接入](./docs/service_governance_zh_CN.md)
     + [API参考(服务器)](https://godoc.org/github.com/lonnng/nano)
     + [如何将`lua`脚本集成到`nano`组件中(未完成)](.)
 

@@ -42,9 +42,15 @@ func WithAdvertiseAddr(addr string, retryInterval ...time.Duration) Option {
 	}
 }
 
-// WithMemberAddr sets the listen address which is used to establish connection between
-// cluster members. Will select an available port automatically if no member address
-// setting and panic if no available port
+// WithMemberAddr sets the address advertised to other cluster members.
+// It can be different from the listen address when running behind Docker or K8s.
+func WithMemberAddr(addr string) Option {
+	return func(opt *cluster.Options) {
+		opt.MemberAddr = addr
+	}
+}
+
+// WithClientAddr sets the client-facing address for gate nodes.
 func WithClientAddr(addr string) Option {
 	return func(opt *cluster.Options) {
 		opt.ClientAddr = addr
@@ -62,6 +68,20 @@ func WithMaster() Option {
 func WithGrpcOptions(opts ...grpc.DialOption) Option {
 	return func(_ *cluster.Options) {
 		env.GrpcOptions = append(env.GrpcOptions, opts...)
+	}
+}
+
+// WithUnaryServerInterceptors adds framework RPC interceptors such as tracing or metrics.
+func WithUnaryServerInterceptors(interceptors ...grpc.UnaryServerInterceptor) Option {
+	return func(opt *cluster.Options) {
+		opt.UnaryServerInterceptors = append(opt.UnaryServerInterceptors, interceptors...)
+	}
+}
+
+// WithUnaryClientInterceptors adds interceptors to every nano cluster RPC connection.
+func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) Option {
+	return func(opt *cluster.Options) {
+		opt.UnaryClientInterceptors = append(opt.UnaryClientInterceptors, interceptors...)
 	}
 }
 

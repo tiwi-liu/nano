@@ -128,7 +128,7 @@ func (c *cluster) Unregister(_ context.Context, req *clusterpb.UnregisterRequest
 			continue
 		}
 
-		if m.MemberInfo().ServiceAddr == c.currentNode.ServiceAddr {
+		if m.MemberInfo().ServiceAddr == c.currentNode.memberAddr() {
 			continue
 		}
 		pool, err := c.rpcClient.getConnPool(m.memberInfo.ServiceAddr)

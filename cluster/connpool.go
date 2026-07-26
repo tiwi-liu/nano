@@ -38,28 +38,29 @@ type connPool struct {
 
 type rpcClient struct {
 	sync.RWMutex
-	isClosed bool
-	pools    map[string]*connPool
+	isClosed    bool
+	pools       map[string]*connPool
+	dialOptions []grpc.DialOption
 }
 
-func newConnArray(maxSize uint, addr string) (*connPool, error) {
+func newConnArray(maxSize uint, addr string, dialOptions []grpc.DialOption) (*connPool, error) {
 	a := &connPool{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
 	}
-	if err := a.init(addr); err != nil {
+	if err := a.init(addr, dialOptions); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connPool) init(addr string) error {
+func (a *connPool) init(addr string, dialOptions []grpc.DialOption) error {
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		conn, err := grpc.DialContext(
 			ctx,
 			addr,
-			env.GrpcOptions...,
+			dialOptions...,
 		)
 		cancel()
 		if err != nil {
@@ -90,9 +91,13 @@ func (a *connPool) Close() {
 	}
 }
 
-func newRPCClient() *rpcClient {
+func newRPCClient(interceptors ...grpc.UnaryClientInterceptor) *rpcClient {
+	dialOptions := append([]grpc.DialOption(nil), env.GrpcOptions...)
+	if len(interceptors) > 0 {
+		dialOptions = append(dialOptions, grpc.WithChainUnaryInterceptor(interceptors...))
+	}
 	return &rpcClient{
-		pools: make(map[string]*connPool),
+		pools: make(map[string]*connPool), dialOptions: dialOptions,
 	}
 }
 
@@ -121,7 +126,7 @@ func (c *rpcClient) createConnPool(addr string) (*connPool, error) {
 	if !ok {
 		var err error
 		// TODO: make conn count configurable
-		array, err = newConnArray(10, addr)
+		array, err = newConnArray(10, addr, c.dialOptions)
 		if err != nil {
 			return nil, err
 		}

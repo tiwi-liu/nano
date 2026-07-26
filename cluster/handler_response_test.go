@@ -18,11 +18,17 @@ import (
 type handlerResponseEntity struct {
 	code errcode.Code
 	body interface{}
+	err  error
 }
 
 func (e *handlerResponseEntity) Push(string, interface{}) error { return nil }
 func (e *handlerResponseEntity) RPC(string, interface{}) error  { return nil }
 func (e *handlerResponseEntity) SendResponse(_ uint64, code errcode.Code, body interface{}) error {
+	if e.err != nil {
+		err := e.err
+		e.err = nil
+		return err
+	}
 	e.code = code
 	e.body = body
 	return nil
@@ -84,6 +90,27 @@ func TestBusinessResponseKeepsSystemCodeOK(t *testing.T) {
 	entity := invokeResponseContractHandler(t, "Responds")
 	if entity.code != errcode.CodeOk || entity.body != "business response" {
 		t.Fatalf("response = (%d, %v), want (CodeOk, business response)", entity.code, entity.body)
+	}
+}
+
+func TestFailedBusinessResponseFallsBackToSystemError(t *testing.T) {
+	entity := &handlerResponseEntity{err: errors.New("gateway unavailable")}
+	ctx, cancel := session.NewRequestContext(context.Background(), session.New(entity), 1)
+	defer cancel()
+	receiver := &responseContractService{}
+	method, ok := reflect.TypeOf(receiver).MethodByName("Responds")
+	if !ok {
+		t.Fatal("Responds method not found")
+	}
+	handler := &component.Handler{Receiver: reflect.ValueOf(receiver), Method: method}
+	args := []reflect.Value{handler.Receiver, reflect.ValueOf(ctx), reflect.ValueOf(&[]byte{})}
+
+	invokeHandler(handler, args, ctx, &message.Message{Type: message.Request, Route: "Service.Responds"})
+	if entity.code != errcode.CodeInternalErr {
+		t.Fatalf("system code = %d, want CodeInternalErr", entity.code)
+	}
+	if entity.body != nil {
+		t.Fatalf("system error body = %v, want nil", entity.body)
 	}
 }
 
@@ -155,5 +182,38 @@ func TestHandleResponsePropagatesUIDToGatewaySession(t *testing.T) {
 	}
 	if got := s.UID(); got != 100 {
 		t.Fatalf("gateway session UID = %d, want propagated UID 100", got)
+	}
+}
+
+func TestGatewayRouteUsesAdvertisedMemberAddress(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	s := session.New(entity)
+	node := &Node{
+		ServiceAddr: "0.0.0.0:34591",
+		Options:     Options{MemberAddr: "nano-gate:34591"},
+	}
+	handler := &LocalHandler{currentNode: node}
+
+	gateAddr, sessionID := handler.gatewayRoute(s)
+	if gateAddr != "nano-gate:34591" {
+		t.Fatalf("gateAddr = %q, want advertised member address", gateAddr)
+	}
+	if sessionID != s.ID() {
+		t.Fatalf("sessionID = %d, want %d", sessionID, s.ID())
+	}
+}
+
+func TestGatewayRouteKeepsOriginalGateAddressForForwardedSession(t *testing.T) {
+	entity := &acceptor{gateAddr: "nano-gate-a:34591", sid: 99}
+	s := session.New(entity)
+	node := &Node{
+		ServiceAddr: "0.0.0.0:34580",
+		Options:     Options{MemberAddr: "nano-node-game:34580"},
+	}
+	handler := &LocalHandler{currentNode: node}
+
+	gateAddr, sessionID := handler.gatewayRoute(s)
+	if gateAddr != "nano-gate-a:34591" || sessionID != 99 {
+		t.Fatalf("gatewayRoute = (%q, %d), want forwarded gate route", gateAddr, sessionID)
 	}
 }

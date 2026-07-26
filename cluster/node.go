@@ -49,22 +49,25 @@ import (
 
 // Options contains some configurations for current node
 type Options struct {
-	Pipeline           pipeline.Pipeline
-	IsMaster           bool
-	AdvertiseAddr      string
-	RetryInterval      time.Duration
-	ClientAddr         string
-	Components         *component.Components
-	Label              string
-	IsWebsocket        bool
-	TSLCertificate     string
-	TSLKey             string
-	UnregisterCallback func(Member)
-	RemoteServiceRoute CustomerRemoteServiceRoute
-	RequestTimeout     time.Duration
-	RPCTimeout         time.Duration
-	WriteTimeout       time.Duration
-	ClusterAuthToken   string
+	Pipeline                pipeline.Pipeline
+	IsMaster                bool
+	AdvertiseAddr           string
+	MemberAddr              string
+	RetryInterval           time.Duration
+	ClientAddr              string
+	Components              *component.Components
+	Label                   string
+	IsWebsocket             bool
+	TSLCertificate          string
+	TSLKey                  string
+	UnregisterCallback      func(Member)
+	RemoteServiceRoute      CustomerRemoteServiceRoute
+	RequestTimeout          time.Duration
+	RPCTimeout              time.Duration
+	WriteTimeout            time.Duration
+	ClusterAuthToken        string
+	UnaryServerInterceptors []grpc.UnaryServerInterceptor
+	UnaryClientInterceptors []grpc.UnaryClientInterceptor
 }
 
 const DefaultRequestTimeout = 5 * time.Second
@@ -96,6 +99,9 @@ type Node struct {
 func (n *Node) Startup() error {
 	if n.ServiceAddr == "" {
 		return errors.New("service address cannot be empty in master node")
+	}
+	if n.MemberAddr == "" {
+		n.MemberAddr = n.ServiceAddr
 	}
 	n.sessions = map[int64]*session.Session{}
 	n.cluster = newCluster(n)
@@ -142,6 +148,13 @@ func (n *Node) Handler() *LocalHandler {
 	return n.handler
 }
 
+func (n *Node) memberAddr() string {
+	if n.MemberAddr != "" {
+		return n.MemberAddr
+	}
+	return n.ServiceAddr
+}
+
 func (n *Node) initNode() error {
 	// Current node is not master server and does not contains master
 	// address, so running in singleton mode
@@ -155,8 +168,9 @@ func (n *Node) initNode() error {
 	}
 
 	// Initialize the gRPC server and register service
-	n.server = grpc.NewServer(grpc.UnaryInterceptor(n.authUnaryInterceptor()))
-	n.rpcClient = newRPCClient()
+	serverInterceptors := append([]grpc.UnaryServerInterceptor{n.authUnaryInterceptor()}, n.UnaryServerInterceptors...)
+	n.server = grpc.NewServer(grpc.ChainUnaryInterceptor(serverInterceptors...))
+	n.rpcClient = newRPCClient(n.UnaryClientInterceptors...)
 	clusterpb.RegisterMemberServer(n.server, n)
 
 	go func() {
@@ -172,7 +186,7 @@ func (n *Node) initNode() error {
 			isMaster: true,
 			memberInfo: &clusterpb.MemberInfo{
 				Label:       n.Label,
-				ServiceAddr: n.ServiceAddr,
+				ServiceAddr: n.memberAddr(),
 				Services:    n.handler.LocalService(),
 			},
 		}
@@ -187,7 +201,7 @@ func (n *Node) initNode() error {
 		request := &clusterpb.RegisterRequest{
 			MemberInfo: &clusterpb.MemberInfo{
 				Label:       n.Label,
-				ServiceAddr: n.ServiceAddr,
+				ServiceAddr: n.memberAddr(),
 				Services:    n.handler.LocalService(),
 			},
 		}
@@ -236,7 +250,7 @@ func (n *Node) Shutdown() {
 		}
 		client := clusterpb.NewMasterClient(pool.Get())
 		request := &clusterpb.UnregisterRequest{
-			ServiceAddr: n.ServiceAddr,
+			ServiceAddr: n.memberAddr(),
 		}
 		ctx, cancel := n.rpcContext(context.Background())
 		_, err = client.Unregister(ctx, request)
@@ -608,7 +622,7 @@ func (n *Node) keepalive() {
 		_, err = masterCli.Heartbeat(ctx, &clusterpb.HeartbeatRequest{
 			MemberInfo: &clusterpb.MemberInfo{
 				Label:       n.Label,
-				ServiceAddr: n.ServiceAddr,
+				ServiceAddr: n.memberAddr(),
 				Services:    n.handler.LocalService(),
 			},
 		})
