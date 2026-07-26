@@ -42,6 +42,7 @@ import (
 	"github.com/lonng/nano/internal/log"
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/pipeline"
+	"github.com/lonng/nano/registry"
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/session"
 	"google.golang.org/grpc"
@@ -66,6 +67,7 @@ type Options struct {
 	RPCTimeout              time.Duration
 	WriteTimeout            time.Duration
 	ClusterAuthToken        string
+	ServiceRegistry         registry.Registry
 	UnaryServerInterceptors []grpc.UnaryServerInterceptor
 	UnaryClientInterceptors []grpc.UnaryClientInterceptor
 }
@@ -93,6 +95,7 @@ type Node struct {
 
 	once          sync.Once
 	keepaliveExit chan struct{}
+	registryExit  context.CancelFunc
 	shuttingDown  int32
 }
 
@@ -156,9 +159,9 @@ func (n *Node) memberAddr() string {
 }
 
 func (n *Node) initNode() error {
-	// Current node is not master server and does not contains master
-	// address, so running in singleton mode
-	if !n.IsMaster && n.AdvertiseAddr == "" {
+	// Current node is not master server and does not contain a discovery backend,
+	// so it runs in singleton mode.
+	if !n.IsMaster && n.AdvertiseAddr == "" && n.ServiceRegistry == nil {
 		return nil
 	}
 
@@ -192,6 +195,10 @@ func (n *Node) initNode() error {
 		}
 		n.cluster.members = append(n.cluster.members, member)
 		n.cluster.setRpcClient(n.rpcClient)
+	} else if n.ServiceRegistry != nil {
+		if err := n.startRegistryDiscovery(); err != nil {
+			return err
+		}
 	} else {
 		pool, err := n.rpcClient.getConnPool(n.AdvertiseAddr)
 		if err != nil {
@@ -242,7 +249,10 @@ func (n *Node) Shutdown() {
 	if n.keepaliveExit != nil {
 		close(n.keepaliveExit)
 	}
-	if !n.IsMaster && n.AdvertiseAddr != "" {
+	if n.registryExit != nil {
+		n.registryExit()
+	}
+	if !n.IsMaster && n.AdvertiseAddr != "" && n.ServiceRegistry == nil {
 		pool, err := n.rpcClient.getConnPool(n.AdvertiseAddr)
 		if err != nil {
 			log.Println("Retrieve master address error", err)

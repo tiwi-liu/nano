@@ -10,6 +10,7 @@ import (
 	"github.com/lonng/nano/internal/log"
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/pipeline"
+	"github.com/lonng/nano/registry"
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/serialize"
 	"github.com/lonng/nano/service"
@@ -90,6 +91,14 @@ func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) Op
 func WithClusterAuthToken(token string) Option {
 	return func(opt *cluster.Options) {
 		opt.ClusterAuthToken = token
+	}
+}
+
+// WithRegistry enables registry-backed service discovery.
+// When this option is set, a node/gate can join the cluster without a master.
+func WithRegistry(serviceRegistry registry.Registry) Option {
+	return func(opt *cluster.Options) {
+		opt.ServiceRegistry = serviceRegistry
 	}
 }
 

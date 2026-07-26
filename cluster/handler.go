@@ -221,6 +221,7 @@ func (h *LocalHandler) addRemoteService(member *clusterpb.MemberInfo) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.delMemberLocked(member.ServiceAddr)
 	for _, s := range member.Services {
 		log.Println("Register remote service", s)
 		h.remoteServices[s] = append(h.remoteServices[s], member)
@@ -229,25 +230,63 @@ func (h *LocalHandler) addRemoteService(member *clusterpb.MemberInfo) {
 
 func (h *LocalHandler) delMember(addr string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.delMemberLocked(addr)
+	h.mu.Unlock()
 
+	h.currentNode.clearSessionRoutesForAddress(addr)
+}
+
+func (h *LocalHandler) delMemberLocked(addr string) {
 	for name, members := range h.remoteServices {
-		for i, maddr := range members {
-			if addr == maddr.ServiceAddr {
-				if i >= len(members)-1 {
-					members = members[:i]
-				} else {
-					members = append(members[:i], members[i+1:]...)
-				}
+		filtered := members[:0]
+		for _, member := range members {
+			if addr != member.ServiceAddr {
+				filtered = append(filtered, member)
 			}
 		}
-		if len(members) == 0 {
+		if len(filtered) == 0 {
 			delete(h.remoteServices, name)
 		} else {
-			h.remoteServices[name] = members
+			h.remoteServices[name] = filtered
 		}
 	}
-	h.currentNode.clearSessionRoutesForAddress(addr)
+}
+
+func (h *LocalHandler) syncRemoteMembers(members []*clusterpb.MemberInfo) {
+	next := make(map[string][]*clusterpb.MemberInfo)
+	nextAddrs := make(map[string]struct{})
+	for _, member := range members {
+		if member == nil || member.ServiceAddr == "" {
+			continue
+		}
+		nextAddrs[member.ServiceAddr] = struct{}{}
+		for _, service := range member.Services {
+			if service == "" {
+				continue
+			}
+			next[service] = append(next[service], member)
+		}
+	}
+
+	h.mu.Lock()
+	removed := make([]string, 0)
+	oldAddrs := make(map[string]struct{})
+	for _, serviceMembers := range h.remoteServices {
+		for _, member := range serviceMembers {
+			oldAddrs[member.ServiceAddr] = struct{}{}
+		}
+	}
+	for addr := range oldAddrs {
+		if _, ok := nextAddrs[addr]; !ok {
+			removed = append(removed, addr)
+		}
+	}
+	h.remoteServices = next
+	h.mu.Unlock()
+
+	for _, addr := range removed {
+		h.currentNode.clearSessionRoutesForAddress(addr)
+	}
 }
 
 func (h *LocalHandler) LocalService() []string {

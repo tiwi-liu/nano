@@ -240,10 +240,23 @@ func (c *cluster) remoteAddrs() []string {
 
 func (c *cluster) initMembers(members []*clusterpb.MemberInfo) {
 	c.mu.Lock()
+	c.members = c.members[:0]
 	for _, info := range members {
 		c.members = append(c.members, &Member{
 			memberInfo: info,
 		})
+	}
+	c.mu.Unlock()
+}
+
+func (c *cluster) syncMembers(members []*clusterpb.MemberInfo) {
+	c.mu.Lock()
+	c.members = c.members[:0]
+	for _, info := range members {
+		if info == nil || info.ServiceAddr == "" {
+			continue
+		}
+		c.members = append(c.members, &Member{memberInfo: info})
 	}
 	c.mu.Unlock()
 }
