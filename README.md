@@ -29,10 +29,10 @@ The simplest "nano" application as shown in the following figure, you can make p
 ![Application](media/application.png)
 
 In fact, the `nano` application is a collection of  [Component ](./docs/get_started.md#component) , and a component is a bundle of  [Handler](./docs/get_started.md#handler), once you register a component to nano, nano will register all methods that can be converted to `Handler` to nano service container. Service was accessed by `Component.Handler`, and the handler will be called while client request. The handler will receive two parameters while handling a message:
-  - `*session.Session`: corresponding a client that apply this request or notify.
+  - `*session.RequestContext`: request-scoped context for response, push, internal calls and session identity.
   - `*protocol.FooBar`: the payload of the request.
 
-While you had processed your logic, you can response or push message to the client by `session.Response(payload)` and `session.Push('eventName', payload)`, or returns error when some unexpected data received.
+While you had processed your logic, you can response or push message to the client by `ctx.Response(payload)` and `ctx.Push("eventName", payload)`. A request handler must call `ctx.Response` before it returns.
 
 #### How to build distributed system with `Nano`
 
@@ -45,17 +45,16 @@ The Nano will remain simple, but you can perform any operations in the component
 #### How to execute the asynchronous task
 
 ```golang
-func (manager *PlayerManager) Login(s *session.Session, msg *ReqPlayerLogin) error {
-    var onDBResult = func(player *Player) {
-        manager.players = append(manager.players, player)
-        s.Push("PlayerSystem.LoginSuccess", &ResPlayerLogin)
+func (manager *PlayerManager) Login(ctx *session.RequestContext, msg *ReqPlayerLogin) error {
+    sess := ctx.Session()
+    taskID := createTaskID()
+    if err := ctx.Response(&ResPlayerLoginAccepted{TaskID: taskID}); err != nil {
+        return err
     }
-    
-    // run slow task in new gorontine
+
     go func() {
-        player, err := db.QueryPlayer(msg.PlayerId) // ignore error in demo
-        // handle result in main logical gorontine
-        nano.Invoke(func(){ onDBResult(player) })
+        player, err := db.QueryPlayer(msg.PlayerId)
+        _ = sess.Push("PlayerSystem.LoginResult", &ResPlayerLogin{TaskID: taskID, Player: player, Error: errString(err)})
     }
     return nil
 }
@@ -68,6 +67,7 @@ func (manager *PlayerManager) Login(s *session.Session, msg *ReqPlayerLogin) err
     + [Route compression](./docs/route_compression.md)
     + [Communication protocol](./docs/communication_protocol.md)
     + [Design patterns](./docs/design_patterns.md)
+    + [Framework architecture review](./docs/framework_architecture_review.md)
     + [API Reference(Server)](https://godoc.org/github.com/lonnng/nano)
     + [How to integrate `Lua` into `Nano` component(incomplete)](.)
 
@@ -75,6 +75,7 @@ func (manager *PlayerManager) Login(s *session.Session, msg *ReqPlayerLogin) err
     + [如何构建你的第一个nano应用](./docs/get_started_zh_CN.md)
     + [路由压缩](./docs/route_compression_zh_CN.md)
     + [通信协议](./docs/communication_protocol_zh_CN.md)
+    + [框架架构 Review](./docs/framework_architecture_review.md)
     + [API参考(服务器)](https://godoc.org/github.com/lonnng/nano)
     + [如何将`lua`脚本集成到`nano`组件中(未完成)](.)
 

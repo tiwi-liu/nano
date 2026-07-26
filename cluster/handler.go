@@ -26,7 +26,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/lonng/nano/pkg/errcode"
-	"google.golang.org/grpc/metadata"
 	"math/rand"
 	"net"
 	"reflect"
@@ -145,7 +144,9 @@ func (h *LocalHandler) Call(ctx context.Context, uid int64, route string, reques
 		if poolErr != nil {
 			return poolErr
 		}
-		callResponse, err = clusterpb.NewMemberClient(pool.Get()).Call(ctx, callRequest)
+		rpcCtx, cancel := h.currentNode.rpcContext(ctx)
+		callResponse, err = clusterpb.NewMemberClient(pool.Get()).Call(rpcCtx, callRequest)
+		cancel()
 	}
 	if err != nil {
 		return err
@@ -246,6 +247,7 @@ func (h *LocalHandler) delMember(addr string) {
 			h.remoteServices[name] = members
 		}
 	}
+	h.currentNode.clearSessionRoutesForAddress(addr)
 }
 
 func (h *LocalHandler) LocalService() []string {
@@ -271,7 +273,7 @@ func (h *LocalHandler) RemoteService() []string {
 
 func (h *LocalHandler) handle(conn net.Conn) {
 	// create a client agent and startup write gorontine
-	agent := newAgent(conn, h.pipeline, h.remoteProcess)
+	agent := newAgent(conn, h.pipeline, h.remoteProcess, h.currentNode.writeTimeout())
 	h.currentNode.storeSession(agent.session)
 
 	// startup write goroutine
@@ -283,6 +285,7 @@ func (h *LocalHandler) handle(conn net.Conn) {
 
 	// guarantee agent related resource be destroyed
 	defer func() {
+		h.currentNode.removeSession(agent.session.ID())
 		request := &clusterpb.SessionClosedRequest{
 			SessionId: agent.session.ID(),
 		}
@@ -296,7 +299,9 @@ func (h *LocalHandler) handle(conn net.Conn) {
 				continue
 			}
 			client := clusterpb.NewMemberClient(pool.Get())
-			_, err = client.SessionClosed(context.Background(), request)
+			ctx, cancel := h.currentNode.rpcContext(context.Background())
+			_, err = client.SessionClosed(ctx, request)
+			cancel()
 			if err != nil {
 				log.Println("Cannot closed session in remote address", remote, err)
 				continue
@@ -391,7 +396,13 @@ func (h *LocalHandler) processPacket(agent *agent, p *packet.Packet) error {
 func (h *LocalHandler) findMembers(service string) []*clusterpb.MemberInfo {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.remoteServices[service]
+	members := h.remoteServices[service]
+	if len(members) == 0 {
+		return nil
+	}
+	result := make([]*clusterpb.MemberInfo, len(members))
+	copy(result, members)
+	return result
 }
 
 func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Message, noCopy bool) {
@@ -466,8 +477,8 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	}
 
 	client := clusterpb.NewMemberClient(pool.Get())
-	md := metadata.Pairs("uid", strconv.FormatInt(session.UID(), 10))
-	ctx := metadata.NewOutgoingContext(context.Background(), md)
+	ctx, cancel := h.currentNode.rpcContext(context.Background(), "uid", strconv.FormatInt(session.UID(), 10))
+	defer cancel()
 	switch msg.Type {
 	case message.Request:
 		request := &clusterpb.RequestMessage{

@@ -65,6 +65,14 @@ func WithGrpcOptions(opts ...grpc.DialOption) Option {
 	}
 }
 
+// WithClusterAuthToken requires the same token on all cluster gRPC calls.
+// Empty token disables cluster RPC authentication.
+func WithClusterAuthToken(token string) Option {
+	return func(opt *cluster.Options) {
+		opt.ClusterAuthToken = token
+	}
+}
+
 // WithComponents sets the Components
 func WithComponents(components *component.Components) Option {
 	return func(opt *cluster.Options) {
@@ -186,6 +194,26 @@ func WithRequestTimeout(timeout time.Duration) Option {
 	}
 	return func(opt *cluster.Options) {
 		opt.RequestTimeout = timeout
+	}
+}
+
+// WithRPCTimeout sets the timeout for framework cluster gRPC calls.
+func WithRPCTimeout(timeout time.Duration) Option {
+	if timeout <= 0 {
+		panic("rpc timeout must be greater than zero")
+	}
+	return func(opt *cluster.Options) {
+		opt.RPCTimeout = timeout
+	}
+}
+
+// WithWriteTimeout sets the socket write deadline for responses, pushes and heartbeats.
+func WithWriteTimeout(timeout time.Duration) Option {
+	if timeout <= 0 {
+		panic("write timeout must be greater than zero")
+	}
+	return func(opt *cluster.Options) {
+		opt.WriteTimeout = timeout
 	}
 }
 

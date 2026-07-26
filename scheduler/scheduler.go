@@ -54,7 +54,27 @@ var (
 	closed  int32
 
 	workerCnt int32 // must be configured before Sched
+
+	submittedTotal int64
+	enqueuedTotal  int64
+	rejectedTotal  int64
+	startedTotal   int64
+	completedTotal int64
+	waitNanosTotal int64
+	runNanosTotal  int64
 )
+
+type StatsSnapshot struct {
+	QueueLen       int
+	QueueCap       int
+	SubmittedTotal int64
+	EnqueuedTotal  int64
+	RejectedTotal  int64
+	StartedTotal   int64
+	CompletedTotal int64
+	WaitNanosTotal int64
+	RunNanosTotal  int64
+}
 
 func try(f func()) {
 	defer func() {
@@ -63,6 +83,37 @@ func try(f func()) {
 		}
 	}()
 	f()
+}
+
+func instrument(task Task) Task {
+	if task == nil {
+		return nil
+	}
+	enqueuedAt := time.Now()
+	return func() {
+		atomic.AddInt64(&startedTotal, 1)
+		atomic.AddInt64(&waitNanosTotal, time.Since(enqueuedAt).Nanoseconds())
+		startedAt := time.Now()
+		defer func() {
+			atomic.AddInt64(&runNanosTotal, time.Since(startedAt).Nanoseconds())
+			atomic.AddInt64(&completedTotal, 1)
+		}()
+		task()
+	}
+}
+
+func Stats() StatsSnapshot {
+	return StatsSnapshot{
+		QueueLen:       len(chTasks),
+		QueueCap:       cap(chTasks),
+		SubmittedTotal: atomic.LoadInt64(&submittedTotal),
+		EnqueuedTotal:  atomic.LoadInt64(&enqueuedTotal),
+		RejectedTotal:  atomic.LoadInt64(&rejectedTotal),
+		StartedTotal:   atomic.LoadInt64(&startedTotal),
+		CompletedTotal: atomic.LoadInt64(&completedTotal),
+		WaitNanosTotal: atomic.LoadInt64(&waitNanosTotal),
+		RunNanosTotal:  atomic.LoadInt64(&runNanosTotal),
+	}
 }
 
 // Configure sets scheduler worker count and task backlog.
@@ -142,15 +193,20 @@ func Close() {
 }
 
 func PushTask(task Task) {
-	chTasks <- task
+	atomic.AddInt64(&submittedTotal, 1)
+	chTasks <- instrument(task)
+	atomic.AddInt64(&enqueuedTotal, 1)
 }
 
 // TryPushTask tries to enqueue task without blocking. It returns false if the queue is full.
 func TryPushTask(task Task) bool {
+	atomic.AddInt64(&submittedTotal, 1)
 	select {
-	case chTasks <- task:
+	case chTasks <- instrument(task):
+		atomic.AddInt64(&enqueuedTotal, 1)
 		return true
 	default:
+		atomic.AddInt64(&rejectedTotal, 1)
 		return false
 	}
 }

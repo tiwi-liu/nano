@@ -162,3 +162,27 @@ func TestEncode(t *testing.T) {
 		t.Error("not equal")
 	}
 }
+
+func TestDecodeRejectsMalformedCompressedRoute(t *testing.T) {
+	// Notify + compressed route flag, but no two-byte route code follows.
+	if _, err := Decode([]byte{byte(Notify<<1) | msgRouteCompressMask, 0x01}); err == nil {
+		t.Fatal("malformed compressed route should fail")
+	}
+}
+
+func TestDecodeRejectsUnterminatedMessageID(t *testing.T) {
+	data := []byte{byte(Request << 1)}
+	for i := 0; i < 11; i++ {
+		data = append(data, 0x80)
+	}
+	if _, err := Decode(data); err == nil {
+		t.Fatal("unterminated message id should fail")
+	}
+}
+
+func TestEncodeRejectsOversizedRoute(t *testing.T) {
+	m := &Message{Type: Notify, Route: string(make([]byte, msgRouteLengthMask+1))}
+	if _, err := Encode(m); err == nil {
+		t.Fatal("oversized route should fail")
+	}
+}

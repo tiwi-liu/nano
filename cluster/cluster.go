@@ -84,7 +84,9 @@ func (c *cluster) Register(_ context.Context, req *clusterpb.RegisterRequest) (*
 			return nil, err
 		}
 		client := clusterpb.NewMemberClient(pool.Get())
-		_, err = client.NewMember(context.Background(), newMember)
+		ctx, cancel := c.currentNode.rpcContext(context.Background())
+		_, err = client.NewMember(ctx, newMember)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +136,9 @@ func (c *cluster) Unregister(_ context.Context, req *clusterpb.UnregisterRequest
 			return nil, err
 		}
 		client := clusterpb.NewMemberClient(pool.Get())
-		_, err = client.DelMember(context.Background(), delMember)
+		ctx, cancel := c.currentNode.rpcContext(context.Background())
+		_, err = client.DelMember(ctx, delMember)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
@@ -189,11 +193,13 @@ func (c *cluster) checkMemberHeartbeat() {
 	check := func() {
 		unregisterMembers := make([]*Member, 0)
 		// check heartbeat time
+		c.mu.RLock()
 		for _, m := range c.members {
 			if time.Now().Sub(m.lastHeartbeatAt) > 4*env.Heartbeat && !m.isMaster {
 				unregisterMembers = append(unregisterMembers, m)
 			}
 		}
+		c.mu.RUnlock()
 
 		for _, m := range unregisterMembers {
 			if _, err := c.Unregister(context.Background(), &clusterpb.UnregisterRequest{
@@ -277,4 +283,5 @@ func (c *cluster) delMember(addr string) {
 		}
 	}
 	c.mu.Unlock()
+	c.currentNode.clearSessionRoutesForAddress(addr)
 }

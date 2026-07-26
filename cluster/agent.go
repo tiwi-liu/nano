@@ -63,6 +63,7 @@ type (
 		lastAt   int64               // last heartbeat unix time stamp
 		decoder  *codec.Decoder      // binary decoder
 		pipeline pipeline.Pipeline
+		writeTTL time.Duration
 
 		rpcHandler rpcHandler
 		srv        reflect.Value // cached session reflect.Value
@@ -78,7 +79,7 @@ type (
 )
 
 // Create new agent instance
-func newAgent(conn net.Conn, pipeline pipeline.Pipeline, rpcHandler rpcHandler) *agent {
+func newAgent(conn net.Conn, pipeline pipeline.Pipeline, rpcHandler rpcHandler, writeTimeout time.Duration) *agent {
 	a := &agent{
 		conn:       conn,
 		state:      statusStart,
@@ -87,6 +88,7 @@ func newAgent(conn net.Conn, pipeline pipeline.Pipeline, rpcHandler rpcHandler) 
 		chSend:     make(chan pendingMessage, agentWriteBacklog),
 		decoder:    codec.NewDecoder(),
 		pipeline:   pipeline,
+		writeTTL:   writeTimeout,
 		rpcHandler: rpcHandler,
 	}
 
@@ -104,18 +106,20 @@ func (a *agent) send(m pendingMessage) (err error) {
 			err = ErrBrokenPipe
 		}
 	}()
-	a.chSend <- m
-	return
+	select {
+	case a.chSend <- m:
+		return nil
+	case <-a.chDie:
+		return ErrBrokenPipe
+	default:
+		return ErrBufferExceed
+	}
 }
 
 // Push, implementation for session.NetworkEntity interface
 func (a *agent) Push(route string, v interface{}) error {
 	if a.status() == statusClosed {
 		return ErrBrokenPipe
-	}
-
-	if len(a.chSend) >= agentWriteBacklog {
-		return ErrBufferExceed
 	}
 
 	if env.Debug {
@@ -161,10 +165,6 @@ func (a *agent) SendResponse(mid uint64, code errcode.Code, v interface{}) error
 
 	if mid <= 0 {
 		return ErrSessionOnNotify
-	}
-
-	if len(a.chSend) >= agentWriteBacklog {
-		return ErrBufferExceed
 	}
 
 	if env.Debug {
@@ -233,12 +233,10 @@ func (a *agent) setStatus(state int32) {
 
 func (a *agent) write() {
 	ticker := time.NewTicker(env.Heartbeat)
-	chWrite := make(chan []byte, agentWriteBacklog)
 	// clean func
 	defer func() {
 		ticker.Stop()
 		close(a.chSend)
-		close(chWrite)
 		a.Close()
 		if env.Debug {
 			log.Println(fmt.Sprintf("Session write goroutine exit, SessionID=%d, UID=%d", a.session.ID(), a.session.UID()))
@@ -253,16 +251,14 @@ func (a *agent) write() {
 				log.Println(fmt.Sprintf("Session heartbeat timeout, LastTime=%d, Deadline=%d", atomic.LoadInt64(&a.lastAt), deadline))
 				return
 			}
-			chWrite <- hbd
-
-		case data := <-chWrite:
-			// close agent while low-level conn broken
-			if _, err := a.conn.Write(data); err != nil {
-				log.Println(err.Error())
+			if !a.writePacket(hbd) {
 				return
 			}
 
-		case data := <-a.chSend:
+		case data, ok := <-a.chSend:
+			if !ok {
+				return
+			}
 			payload, err := message.Serialize(data.payload)
 			if err != nil {
 				switch data.typ {
@@ -273,7 +269,7 @@ func (a *agent) write() {
 				default:
 					// expect
 				}
-				break
+				continue
 			}
 
 			// construct message and encode
@@ -288,23 +284,25 @@ func (a *agent) write() {
 				err := pipe.Outbound().Process(a.session, m)
 				if err != nil {
 					log.Println("broken pipeline", err.Error())
-					break
+					continue
 				}
 			}
 
 			em, err := m.Encode()
 			if err != nil {
 				log.Println(err.Error())
-				break
+				continue
 			}
 
 			// packet encode
 			p, err := codec.Encode(packet.Data, em)
 			if err != nil {
 				log.Println(err)
-				break
+				continue
 			}
-			chWrite <- p
+			if !a.writePacket(p) {
+				return
+			}
 
 		case <-a.chDie: // agent closed signal
 			return
@@ -313,4 +311,18 @@ func (a *agent) write() {
 			return
 		}
 	}
+}
+
+func (a *agent) writePacket(data []byte) bool {
+	if a.writeTTL > 0 {
+		if err := a.conn.SetWriteDeadline(time.Now().Add(a.writeTTL)); err != nil {
+			log.Println(err.Error())
+			return false
+		}
+	}
+	if _, err := a.conn.Write(data); err != nil {
+		log.Println(err.Error())
+		return false
+	}
+	return true
 }

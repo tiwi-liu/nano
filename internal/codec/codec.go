@@ -115,6 +115,9 @@ func Encode(typ packet.Type, data []byte) ([]byte, error) {
 	if typ < packet.Handshake || typ > packet.Kick {
 		return nil, packet.ErrWrongPacketType
 	}
+	if len(data) > MaxPacketSize {
+		return nil, ErrPacketSizeExcced
+	}
 
 	p := &packet.Packet{Type: typ, Length: len(data)}
 	buf := make([]byte, p.Length+HeadLength)

@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -61,9 +62,14 @@ type Options struct {
 	UnregisterCallback func(Member)
 	RemoteServiceRoute CustomerRemoteServiceRoute
 	RequestTimeout     time.Duration
+	RPCTimeout         time.Duration
+	WriteTimeout       time.Duration
+	ClusterAuthToken   string
 }
 
 const DefaultRequestTimeout = 5 * time.Second
+const DefaultRPCTimeout = 3 * time.Second
+const DefaultWriteTimeout = 5 * time.Second
 
 // Node represents a node in nano cluster, which will contains a group of services.
 // All services will register to cluster and messages will be forwarded to the node
@@ -76,12 +82,15 @@ type Node struct {
 	handler   *LocalHandler
 	server    *grpc.Server
 	rpcClient *rpcClient
+	listener  net.Listener
+	httpSrv   *http.Server
 
 	mu       sync.RWMutex
 	sessions map[int64]*session.Session
 
 	once          sync.Once
 	keepaliveExit chan struct{}
+	shuttingDown  int32
 }
 
 func (n *Node) Startup() error {
@@ -146,7 +155,7 @@ func (n *Node) initNode() error {
 	}
 
 	// Initialize the gRPC server and register service
-	n.server = grpc.NewServer()
+	n.server = grpc.NewServer(grpc.UnaryInterceptor(n.authUnaryInterceptor()))
 	n.rpcClient = newRPCClient()
 	clusterpb.RegisterMemberServer(n.server, n)
 
@@ -183,7 +192,9 @@ func (n *Node) initNode() error {
 			},
 		}
 		for {
-			resp, err := client.Register(context.Background(), request)
+			ctx, cancel := n.rpcContext(context.Background())
+			resp, err := client.Register(ctx, request)
+			cancel()
 			if err == nil {
 				n.handler.initRemoteService(resp.Members)
 				n.cluster.initMembers(resp.Members)
@@ -200,6 +211,8 @@ func (n *Node) initNode() error {
 // Shutdowns all components registered by application, that
 // call by reverse order against register
 func (n *Node) Shutdown() {
+	atomic.StoreInt32(&n.shuttingDown, 1)
+
 	// reverse call `BeforeShutdown` hooks
 	components := n.Components.List()
 	length := len(components)
@@ -225,7 +238,9 @@ func (n *Node) Shutdown() {
 		request := &clusterpb.UnregisterRequest{
 			ServiceAddr: n.ServiceAddr,
 		}
-		_, err = client.Unregister(context.Background(), request)
+		ctx, cancel := n.rpcContext(context.Background())
+		_, err = client.Unregister(ctx, request)
+		cancel()
 		if err != nil {
 			log.Println("Unregister current node failed", err)
 			goto EXIT
@@ -233,8 +248,21 @@ func (n *Node) Shutdown() {
 	}
 
 EXIT:
+	if n.httpSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), n.rpcTimeout())
+		if err := n.httpSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Println("HTTP server shutdown failed", err)
+		}
+		cancel()
+	}
+	if n.listener != nil {
+		_ = n.listener.Close()
+	}
 	if n.server != nil {
 		n.server.GracefulStop()
+	}
+	if n.rpcClient != nil {
+		n.rpcClient.closePool()
 	}
 }
 
@@ -244,11 +272,15 @@ func (n *Node) listenAndServe() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	n.listener = listener
 
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if atomic.LoadInt32(&n.shuttingDown) != 0 {
+				return
+			}
 			log.Println(err.Error())
 			continue
 		}
@@ -264,7 +296,8 @@ func (n *Node) listenAndServeWS() {
 		CheckOrigin:     env.CheckOrigin,
 	}
 
-	http.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Println(fmt.Sprintf("Upgrade failure, URI=%s, Error=%s", r.RequestURI, err.Error()))
@@ -274,7 +307,8 @@ func (n *Node) listenAndServeWS() {
 		n.handler.handleWS(conn)
 	})
 
-	if err := http.ListenAndServe(n.ClientAddr, nil); err != nil {
+	n.httpSrv = &http.Server{Addr: n.ClientAddr, Handler: mux}
+	if err := n.httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err.Error())
 	}
 }
@@ -286,7 +320,8 @@ func (n *Node) listenAndServeWSTLS() {
 		CheckOrigin:     env.CheckOrigin,
 	}
 
-	http.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Println(fmt.Sprintf("Upgrade failure, URI=%s, Error=%s", r.RequestURI, err.Error()))
@@ -296,7 +331,8 @@ func (n *Node) listenAndServeWSTLS() {
 		n.handler.handleWS(conn)
 	})
 
-	if err := http.ListenAndServeTLS(n.ClientAddr, n.TSLCertificate, n.TSLKey, nil); err != nil {
+	n.httpSrv = &http.Server{Addr: n.ClientAddr, Handler: mux}
+	if err := n.httpSrv.ListenAndServeTLS(n.TSLCertificate, n.TSLKey); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err.Error())
 	}
 }
@@ -305,6 +341,27 @@ func (n *Node) storeSession(s *session.Session) {
 	n.mu.Lock()
 	n.sessions[s.ID()] = s
 	n.mu.Unlock()
+}
+
+func (n *Node) removeSession(sid int64) (*session.Session, bool) {
+	n.mu.Lock()
+	s, found := n.sessions[sid]
+	delete(n.sessions, sid)
+	n.mu.Unlock()
+	return s, found
+}
+
+func (n *Node) clearSessionRoutesForAddress(addr string) {
+	n.mu.RLock()
+	sessions := make([]*session.Session, 0, len(n.sessions))
+	for _, s := range n.sessions {
+		sessions = append(sessions, s)
+	}
+	n.mu.RUnlock()
+
+	for _, s := range sessions {
+		s.Router().DeleteAddress(addr)
+	}
 }
 
 func (n *Node) findSession(sid int64) *session.Session {
@@ -328,6 +385,7 @@ func (n *Node) findOrCreateSession(sid int64, gateAddr string) (*session.Session
 			gateClient: clusterpb.NewMemberClient(conns.Get()),
 			rpcHandler: n.handler.remoteProcess,
 			gateAddr:   gateAddr,
+			node:       n,
 		}
 		s = session.New(ac)
 		ac.session = s
@@ -546,13 +604,16 @@ func (n *Node) keepalive() {
 			return
 		}
 		masterCli := clusterpb.NewMasterClient(pool.Get())
-		if _, err := masterCli.Heartbeat(context.Background(), &clusterpb.HeartbeatRequest{
+		ctx, cancel := n.rpcContext(context.Background())
+		_, err = masterCli.Heartbeat(ctx, &clusterpb.HeartbeatRequest{
 			MemberInfo: &clusterpb.MemberInfo{
 				Label:       n.Label,
 				ServiceAddr: n.ServiceAddr,
 				Services:    n.handler.LocalService(),
 			},
-		}); err != nil {
+		})
+		cancel()
+		if err != nil {
 			log.Println("Member send heartbeat error", err)
 		}
 	}

@@ -17,6 +17,7 @@ type acceptor struct {
 	session    *session.Session
 	rpcHandler rpcHandler
 	gateAddr   string
+	node       *Node
 }
 
 // Push implements the session.NetworkEntity interface
@@ -31,7 +32,9 @@ func (a *acceptor) Push(route string, v interface{}) error {
 		Route:     route,
 		Data:      data,
 	}
-	_, err = a.gateClient.HandlePush(context.Background(), request)
+	ctx, cancel := a.node.rpcContext(context.Background())
+	_, err = a.gateClient.HandlePush(ctx, request)
+	cancel()
 	return err
 }
 
@@ -68,7 +71,9 @@ func (a *acceptor) SendResponse(mid uint64, code errcode.Code, v interface{}) er
 		ErrCode:   uint64(code),
 		Uid:       a.session.UID(),
 	}
-	_, err := a.gateClient.HandleResponse(context.Background(), request)
+	ctx, cancel := a.node.rpcContext(context.Background())
+	_, err := a.gateClient.HandleResponse(ctx, request)
+	cancel()
 	return err
 }
 
@@ -78,7 +83,9 @@ func (a *acceptor) Close() error {
 	request := &clusterpb.CloseSessionRequest{
 		SessionId: a.sid,
 	}
-	_, err := a.gateClient.CloseSession(context.Background(), request)
+	ctx, cancel := a.node.rpcContext(context.Background())
+	_, err := a.gateClient.CloseSession(ctx, request)
+	cancel()
 	return err
 }
 

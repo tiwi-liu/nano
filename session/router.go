@@ -43,6 +43,16 @@ func (r *Router) Delete(service string) {
 	r.routes.Delete(service)
 }
 
+// DeleteAddress removes all service bindings that point to the address.
+func (r *Router) DeleteAddress(address string) {
+	r.routes.Range(func(key, value interface{}) bool {
+		if value == address {
+			r.routes.Delete(key)
+		}
+		return true
+	})
+}
+
 // Find finds the address corresponding a remote service
 func (r *Router) Find(service string) (string, bool) {
 	v, found := r.routes.Load(service)

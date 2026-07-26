@@ -74,6 +74,12 @@ func TestPack(t *testing.T) {
 	}
 }
 
+func TestEncodeRejectsOversizedPacket(t *testing.T) {
+	if _, err := Encode(Data, make([]byte, MaxPacketSize+1)); err != ErrPacketSizeExcced {
+		t.Fatalf("Encode error = %v, want %v", err, ErrPacketSizeExcced)
+	}
+}
+
 func BenchmarkDecoder_Decode(b *testing.B) {
 	data := []byte("hello world")
 	pp1, err := Encode(Handshake, data)

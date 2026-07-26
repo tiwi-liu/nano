@@ -47,7 +47,7 @@ func (c *DemoComponent) Shutdown()       {}
 `Handler`用来处理业务逻辑，`Handler`可以有如下形式的签名：
 ```go
 // 以下的Handler会自动将消息反序列化，在调用时当做参数传进来
-func (c *DemoComponent) DemoHandler(s *session.Session, payload *pb.DemoPayload) error {
+func (c *DemoComponent) DemoHandler(ctx *session.RequestContext, payload *pb.DemoPayload) error {
     // 业务逻辑开始
     // ...
     // 业务逻辑结束
@@ -56,7 +56,7 @@ func (c *DemoComponent) DemoHandler(s *session.Session, payload *pb.DemoPayload)
 }
 
 // 以下的Handler不会自动将消息反序列化，会将客户端发送过来的消息直接当作参数传进来
-func (c *DemoComponent) DemoHandler(s *session.Session, raw []byte) error {
+func (c *DemoComponent) DemoHandler(ctx *session.RequestContext, raw []byte) error {
     // 业务逻辑开始
     // ...
     // 业务逻辑结束
@@ -149,18 +149,18 @@ func (r *Room) AfterInit() {
 }
 
 // Join room
-func (r *Room) Join(s *session.Session, msg []byte) error {
-	s.Bind(s.ID()) // binding session uid
-	s.Push("onMembers", &AllMembers{Members: r.group.Members()})
+func (r *Room) Join(ctx *session.RequestContext, msg []byte) error {
+	ctx.Bind(ctx.ID()) // binding session uid
+	ctx.Push("onMembers", &AllMembers{Members: r.group.Members()})
 	// notify others
-	r.group.Broadcast("onNewUser", &NewUser{Content: fmt.Sprintf("New user: %d", s.ID())})
+	r.group.Broadcast("onNewUser", &NewUser{Content: fmt.Sprintf("New user: %d", ctx.ID())})
 	// new user join group
-	r.group.Add(s) // add session to group
-	return s.Response(&JoinResponse{Result: "sucess"})
+	r.group.Add(ctx.Session()) // add session to group
+	return ctx.Response(&JoinResponse{Result: "sucess"})
 }
 
 // Send message
-func (r *Room) Message(s *session.Session, msg *UserMessage) error {
+func (r *Room) Message(ctx *session.RequestContext, msg *UserMessage) error {
 	return r.group.Broadcast("onMessage", msg)
 }
 
