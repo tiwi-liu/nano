@@ -51,10 +51,10 @@ func (a *acceptor) RPC(route string, v interface{}) error {
 	return nil
 }
 
-// ResponseMid implements the session.NetworkEntity interface
-func (a *acceptor) ResponseMid(mid uint64, errCode uint64, v interface{}) error {
+// SendResponse implements the session.NetworkEntity interface
+func (a *acceptor) SendResponse(mid uint64, code errcode.Code, v interface{}) error {
 	var data []byte
-	if errCode == uint64(errcode.CodeOk) {
+	if code == errcode.CodeOk {
 		var err error
 		data, err = message.Serialize(v)
 		if err != nil {
@@ -65,16 +65,12 @@ func (a *acceptor) ResponseMid(mid uint64, errCode uint64, v interface{}) error 
 		SessionId: a.sid,
 		Id:        mid,
 		Data:      data,
-		ErrCode:   errCode,
+		ErrCode:   uint64(code),
 		Uid:       a.session.UID(),
 	}
 	_, err := a.gateClient.HandleResponse(context.Background(), request)
 	return err
 }
-
-// func (a *acceptor) ResponseErr(mid uint64, errCode uint64) error {
-// 	return nil
-// }
 
 // Close implements the session.NetworkEntity interface
 func (a *acceptor) Close() error {

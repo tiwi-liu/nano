@@ -46,7 +46,7 @@ func NewRequestContext(parent context.Context, s *Session, mid uint64, callers .
 		requestContext.uid.Store(s.UID())
 		if mid > 0 {
 			requestContext.sender = func(value interface{}, code errcode.Code) error {
-				return s.ResponseMID(mid, value, code)
+				return s.NetworkEntity().SendResponse(mid, code, value)
 			}
 		}
 	}

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/session"
 )
 
@@ -70,8 +71,8 @@ func (n *NetworkEntity) Push(route string, v interface{}) error {
 	return nil
 }
 
-// ResponseMid implements the session.NetworkEntity interface
-func (n *NetworkEntity) ResponseMid(mid uint64, _ uint64, v interface{}) error {
+// SendResponse implements the session.NetworkEntity interface
+func (n *NetworkEntity) SendResponse(mid uint64, _ errcode.Code, v interface{}) error {
 	_, found := n.msgmap[mid]
 	if found {
 		return fmt.Errorf("duplicated message id: %v", mid)

@@ -34,6 +34,7 @@ import (
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/internal/packet"
 	"github.com/lonng/nano/pipeline"
+	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/session"
 )
@@ -151,9 +152,9 @@ func (a *agent) RPC(route string, v interface{}) error {
 	return nil
 }
 
-// ResponseMid, implementation for session.NetworkEntity interface
+// SendResponse, implementation for session.NetworkEntity interface
 // Response message to session
-func (a *agent) ResponseMid(mid uint64, err uint64, v interface{}) error {
+func (a *agent) SendResponse(mid uint64, code errcode.Code, v interface{}) error {
 	if a.status() == statusClosed {
 		return ErrBrokenPipe
 	}
@@ -176,12 +177,12 @@ func (a *agent) ResponseMid(mid uint64, err uint64, v interface{}) error {
 				a.session.ID(), a.session.UID(), mid, v))
 		}
 	}
-	if err != 0 {
+	if code != errcode.CodeOk {
 		v = []byte{}
 		log.Println(fmt.Sprintf("Type=ResponseErr, ID=%d, UID=%d, MID=%d, Err=%d",
-			a.session.ID(), a.session.UID(), mid, err))
+			a.session.ID(), a.session.UID(), mid, code))
 	}
-	errCode := message.ErrCode(err)
+	errCode := message.ErrCode(code)
 	return a.send(pendingMessage{typ: message.Response, mid: mid, err: errCode, payload: v})
 }
 

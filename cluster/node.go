@@ -388,7 +388,7 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 		return nil, err
 	}
 	if identityErr != nil {
-		s.ResponseMID(req.Id, nil, errcode.CodePermissionDenied)
+		s.NetworkEntity().SendResponse(req.Id, errcode.CodePermissionDenied, nil)
 		log.Println(fmt.Sprintf("Reject forwarded request identity, SID=%d, Error=%v", req.SessionId, identityErr))
 		return &clusterpb.MemberHandleResponse{}, nil
 	}
@@ -398,7 +398,7 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 	}
 	handler, found := n.handler.localHandlers[req.Route]
 	if !found {
-		s.ResponseMID(req.Id, nil, errcode.CodeMethodNotFound)
+		s.NetworkEntity().SendResponse(req.Id, errcode.CodeMethodNotFound, nil)
 		return nil, fmt.Errorf("service not found in current node: %v", req.Route)
 	}
 
@@ -452,7 +452,7 @@ func forwardedUID(ctx context.Context) (int64, error) {
 func bindForwardedUID(s *session.Session, uid int64, mid uint64) bool {
 	if s == nil || (uid == 0 && s.UID() != 0) {
 		if s != nil && mid > 0 {
-			s.ResponseMID(mid, nil, errcode.CodePermissionDenied)
+			s.NetworkEntity().SendResponse(mid, errcode.CodePermissionDenied, nil)
 		}
 		return false
 	}
@@ -461,7 +461,7 @@ func bindForwardedUID(s *session.Session, uid int64, mid uint64) bool {
 	}
 	if err := s.Bind(uid); err != nil {
 		if mid > 0 {
-			s.ResponseMID(mid, nil, errcode.CodePermissionDenied)
+			s.NetworkEntity().SendResponse(mid, errcode.CodePermissionDenied, nil)
 		}
 		return false
 	}
@@ -491,7 +491,7 @@ func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage)
 	if !ok {
 		code = errcode.CodeUnknown
 	}
-	return &clusterpb.MemberHandleResponse{}, s.ResponseMID(req.Id, req.Data, code)
+	return &clusterpb.MemberHandleResponse{}, s.NetworkEntity().SendResponse(req.Id, code, req.Data)
 }
 
 func (n *Node) NewMember(_ context.Context, req *clusterpb.NewMemberRequest) (*clusterpb.NewMemberResponse, error) {

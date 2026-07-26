@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/lonng/nano/mock"
+	"github.com/lonng/nano/pkg/errcode"
 	. "github.com/pingcap/check"
 )
 
@@ -39,7 +40,7 @@ func (s *networkEntitySuite) TestNetworkEntity(c *C) {
 	entity := mock.NewNetworkEntity()
 
 	c.Assert(entity.FindResponseByMID(1), IsNil)
-	c.Assert(entity.ResponseMid(1, 0, "test"), IsNil)
+	c.Assert(entity.SendResponse(1, errcode.CodeOk, "test"), IsNil)
 	c.Assert(entity.FindResponseByMID(1).(string), Equals, "test")
 
 	c.Assert(entity.FindResponseByRoute("t.tt"), IsNil)

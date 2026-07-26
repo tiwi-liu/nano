@@ -399,7 +399,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	if index < 0 {
 		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeBadRequest)
+			session.NetworkEntity().SendResponse(msg.ID, errcode.CodeBadRequest, nil)
 		}
 		return
 	}
@@ -408,7 +408,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	members := h.findMembers(service)
 	if len(members) == 0 {
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeServiceNotFound)
+			session.NetworkEntity().SendResponse(msg.ID, errcode.CodeServiceNotFound, nil)
 		}
 		log.Println(fmt.Sprintf("nano/handler: %s not found(forgot registered?)", msg.Route))
 		return
@@ -427,7 +427,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 			if member == nil {
 				log.Println(fmt.Sprintf("customize remoteServiceRoute handler: %s is not found", msg.Route))
 				if msg.Type == message.Request {
-					session.ResponseMID(msg.ID, nil, errcode.CodeServiceUnavailable)
+					session.NetworkEntity().SendResponse(msg.ID, errcode.CodeServiceUnavailable, nil)
 				}
 				return
 			}
@@ -446,7 +446,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	if err != nil {
 		log.Println(err)
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeNetworkException)
+			session.NetworkEntity().SendResponse(msg.ID, errcode.CodeNetworkException, nil)
 		}
 		return
 	}
@@ -489,7 +489,7 @@ func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Mess
 	}
 	if err != nil {
 		if msg.Type == message.Request {
-			session.ResponseMID(msg.ID, nil, errcode.CodeNetworkException)
+			session.NetworkEntity().SendResponse(msg.ID, errcode.CodeNetworkException, nil)
 		}
 		log.Println(fmt.Sprintf("Process remote message (%d:%s) error: %+v", msg.ID, msg.Route, err))
 	}
@@ -530,7 +530,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 		if err != nil {
 			log.Println("Pipeline process failed: " + err.Error())
 			if msg.Type == message.Request {
-				session.ResponseMID(mid, nil, errcode.CodeProtoParseFail)
+				session.NetworkEntity().SendResponse(mid, errcode.CodeProtoParseFail, nil)
 			}
 			return
 		}
@@ -540,7 +540,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 	if index < 0 {
 		log.Println(fmt.Sprintf("nano/handler: invalid route %s", msg.Route))
 		if msg.Type == message.Request {
-			session.ResponseMID(mid, nil, errcode.CodeBadRequest)
+			session.NetworkEntity().SendResponse(mid, errcode.CodeBadRequest, nil)
 		}
 		return
 	}
@@ -553,7 +553,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 		err := env.Serializer.Unmarshal(payload, data)
 		if err != nil {
 			if msg.Type == message.Request {
-				session.ResponseMID(mid, nil, errcode.CodeProtoParseFail)
+				session.NetworkEntity().SendResponse(mid, errcode.CodeProtoParseFail, nil)
 			}
 			log.Println(fmt.Sprintf("Deserialize to %T failed: %+v (%v)", data, err, payload))
 			return
@@ -587,7 +587,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 			stopTimeoutResponse()
 			cancel()
 			if msg.Type == message.Request {
-				session.ResponseMID(mid, nil, errcode.CodeQueueNotFund)
+				session.NetworkEntity().SendResponse(mid, errcode.CodeQueueNotFund, nil)
 			}
 			return
 		}
@@ -599,7 +599,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 			stopTimeoutResponse()
 			cancel()
 			if msg.Type == message.Request {
-				session.ResponseMID(mid, nil, errcode.CodeQueueNotFund)
+				session.NetworkEntity().SendResponse(mid, errcode.CodeQueueNotFund, nil)
 			}
 			return
 		}
@@ -609,7 +609,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 			stopTimeoutResponse()
 			cancel()
 			if msg.Type == message.Request {
-				session.ResponseMID(mid, nil, errcode.CodeServerBusy)
+				session.NetworkEntity().SendResponse(mid, errcode.CodeServerBusy, nil)
 			}
 			// For Notify, drop on overload to avoid blocking caller.
 		}

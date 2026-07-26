@@ -22,8 +22,8 @@ type handlerResponseEntity struct {
 
 func (e *handlerResponseEntity) Push(string, interface{}) error { return nil }
 func (e *handlerResponseEntity) RPC(string, interface{}) error  { return nil }
-func (e *handlerResponseEntity) ResponseMid(_ uint64, code uint64, body interface{}) error {
-	e.code = errcode.Code(code)
+func (e *handlerResponseEntity) SendResponse(_ uint64, code errcode.Code, body interface{}) error {
+	e.code = code
 	e.body = body
 	return nil
 }

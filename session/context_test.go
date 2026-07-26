@@ -37,9 +37,9 @@ func (e *requestContextTestEntity) Push(route string, v interface{}) error {
 }
 
 func (e *requestContextTestEntity) RPC(string, interface{}) error { return nil }
-func (e *requestContextTestEntity) ResponseMid(mid uint64, errCode uint64, v interface{}) error {
+func (e *requestContextTestEntity) SendResponse(mid uint64, code errcode.Code, v interface{}) error {
 	e.responses[mid] = v
-	e.responseErrors[mid] = errCode
+	e.responseErrors[mid] = uint64(code)
 	return nil
 }
 func (e *requestContextTestEntity) Close() error         { return nil }

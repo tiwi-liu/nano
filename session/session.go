@@ -35,7 +35,7 @@ import (
 type NetworkEntity interface {
 	Push(route string, v interface{}) error
 	RPC(route string, v interface{}) error
-	ResponseMid(mid uint64, err uint64, v interface{}) error
+	SendResponse(mid uint64, code errcode.Code, v interface{}) error
 	Close() error
 	RemoteAddr() net.Addr
 }
@@ -92,20 +92,6 @@ func (s *Session) RPC(route string, v interface{}) error {
 func (s *Session) Push(route string, v interface{}) error {
 	return s.entity.Push(route, v)
 }
-
-// ResponseMID responses message to client, mid is
-// request message ID
-func (s *Session) ResponseMID(mid uint64, v interface{}, code errcode.Code) error {
-	if mid <= 0 {
-		return nil
-	}
-	return s.entity.ResponseMid(mid, uint64(code), v)
-}
-
-// // 发送错误给client
-// func (s *Session) ResponseErr(mid uint64, err uint64) error {
-// 	return s.entity.ResponseErr(mid, err)
-// }
 
 // ID returns the session id
 func (s *Session) ID() int64 {
