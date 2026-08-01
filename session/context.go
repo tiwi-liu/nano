@@ -19,6 +19,14 @@ type InternalCaller interface {
 	Call(ctx context.Context, uid int64, route string, request, response interface{}) error
 }
 
+type TargetedInternalCaller interface {
+	CallTo(ctx context.Context, uid int64, memberID, route string, request, response interface{}) error
+}
+
+type InternalInstanceSelector interface {
+	SelectByKey(service, key string) (string, error)
+}
+
 type ResponseSender func(value interface{}, code errcode.Code) error
 
 const (
@@ -77,6 +85,41 @@ func (c *RequestContext) Call(route string, request, response interface{}) error
 		return err
 	}
 	return c.caller.Call(c.Context, c.UID(), route, request, response)
+}
+
+func (c *RequestContext) CallTo(memberID, route string, request, response interface{}) error {
+	if c == nil || c.Context == nil {
+		return ErrInternalCallUnavailable
+	}
+	return c.CallToContext(c.Context, memberID, route, request, response)
+}
+
+// CallToContext performs an exact-instance internal call with an explicit
+// lifetime. It is intended for bounded cleanup work that may outlive the
+// inbound request context.
+func (c *RequestContext) CallToContext(ctx context.Context, memberID, route string, request, response interface{}) error {
+	if c == nil || ctx == nil || c.caller == nil {
+		return ErrInternalCallUnavailable
+	}
+	caller, ok := c.caller.(TargetedInternalCaller)
+	if !ok {
+		return ErrInternalCallUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return caller.CallTo(ctx, c.UID(), memberID, route, request, response)
+}
+
+func (c *RequestContext) SelectByKey(service, key string) (string, error) {
+	if c == nil || c.caller == nil {
+		return "", ErrInternalCallUnavailable
+	}
+	selector, ok := c.caller.(InternalInstanceSelector)
+	if !ok {
+		return "", ErrInternalCallUnavailable
+	}
+	return selector.SelectByKey(service, key)
 }
 
 func (c *RequestContext) Session() *Session {

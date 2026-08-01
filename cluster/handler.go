@@ -22,6 +22,8 @@ package cluster
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,7 @@ import (
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/internal/packet"
 	"github.com/lonng/nano/pipeline"
+	"github.com/lonng/nano/registry"
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/session"
 )
@@ -106,6 +109,7 @@ type LocalHandler struct {
 
 	mu             sync.RWMutex
 	remoteServices map[string][]*clusterpb.MemberInfo
+	instances      map[string]registry.Member
 
 	pipeline    pipeline.Pipeline
 	currentNode *Node
@@ -151,18 +155,53 @@ func (h *LocalHandler) Call(ctx context.Context, uid int64, route string, reques
 	if err != nil {
 		return err
 	}
-	code, ok := errcode.FromWire(callResponse.ErrCode)
-	if !ok {
-		code = errcode.CodeUnknown
+	return decodeInternalCallResponse(callResponse, response)
+}
+
+func (h *LocalHandler) CallTo(ctx context.Context, uid int64, memberID, route string, request, response interface{}) error {
+	index := strings.LastIndex(route, ".")
+	if index < 1 || response == nil || memberID == "" {
+		return &InternalCallError{Code: errcode.CodeBadRequest}
 	}
-	if code != errcode.CodeOk {
-		return &InternalCallError{Code: code}
+	if h.currentNode != nil && memberID == h.currentNode.LocalMemberID {
+		if _, local := h.localHandlers[route]; !local {
+			return &InternalCallError{Code: errcode.CodeServiceNotFound}
+		}
+		return h.Call(ctx, uid, route, request, response)
 	}
-	if raw, ok := response.(*[]byte); ok {
-		*raw = append((*raw)[:0], callResponse.Data...)
-		return nil
+	member, ok := h.findAddressableInstance(memberID)
+	if !ok || !registryMemberHasService(member, route[:index]) {
+		return &InternalCallError{Code: errcode.CodeServiceNotFound}
 	}
-	return env.Serializer.Unmarshal(callResponse.Data, response)
+	data, err := message.Serialize(request)
+	if err != nil {
+		return err
+	}
+	callRequest := &clusterpb.InternalCallRequest{Route: route, Data: data, Uid: uid}
+	pool, err := h.currentNode.rpcClient.getConnPool(member.ServiceAddr)
+	if err != nil {
+		return err
+	}
+	rpcCtx, cancel := h.currentNode.rpcContext(ctx)
+	callResponse, err := clusterpb.NewMemberClient(pool.Get()).Call(rpcCtx, callRequest)
+	cancel()
+	if err != nil {
+		return err
+	}
+	return decodeInternalCallResponse(callResponse, response)
+}
+
+func (h *LocalHandler) SelectByKey(service, key string) (string, error) {
+	member, ok := h.selectInstanceByKey(service, key)
+	if ok {
+		return member.ID, nil
+	}
+	if h.currentNode != nil && h.currentNode.LocalMemberID != "" {
+		if _, local := h.localServices[service]; local {
+			return h.currentNode.LocalMemberID, nil
+		}
+	}
+	return "", &InternalCallError{Code: errcode.CodeServiceNotFound}
 }
 
 func (h *LocalHandler) newRequestContext(s *session.Session, mid uint64) (*session.RequestContext, context.CancelFunc) {
@@ -183,11 +222,90 @@ func NewHandler(currentNode *Node, pipeline pipeline.Pipeline) *LocalHandler {
 		localServices:  make(map[string]*component.Service),
 		localHandlers:  make(map[string]*component.Handler),
 		remoteServices: map[string][]*clusterpb.MemberInfo{},
+		instances:      map[string]registry.Member{},
 		pipeline:       pipeline,
 		currentNode:    currentNode,
 	}
 
 	return h
+}
+
+func decodeInternalCallResponse(callResponse *clusterpb.InternalCallResponse, response interface{}) error {
+	if callResponse == nil {
+		return &InternalCallError{Code: errcode.CodeUnknown}
+	}
+	code, ok := errcode.FromWire(callResponse.ErrCode)
+	if !ok {
+		code = errcode.CodeUnknown
+	}
+	if code != errcode.CodeOk {
+		return &InternalCallError{Code: code}
+	}
+	if raw, ok := response.(*[]byte); ok {
+		*raw = append((*raw)[:0], callResponse.Data...)
+		return nil
+	}
+	return env.Serializer.Unmarshal(callResponse.Data, response)
+}
+
+func (h *LocalHandler) syncRegistryInstances(members []registry.Member, selfAddr string) {
+	next := make(map[string]registry.Member, len(members))
+	for _, member := range members {
+		if member.ID == "" || member.ServiceAddr == "" || member.ServiceAddr == selfAddr || !registry.IsAddressable(member.Status) {
+			continue
+		}
+		next[member.ID] = member
+	}
+	h.mu.Lock()
+	h.instances = next
+	h.mu.Unlock()
+}
+
+func (h *LocalHandler) applyRegistryInstance(event registry.Event, selfAddr string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if event.Type == registry.EventDelete || event.Member.ID == "" || event.Member.ServiceAddr == "" || event.Member.ServiceAddr == selfAddr || !registry.IsAddressable(event.Member.Status) {
+		delete(h.instances, event.Member.ID)
+		return
+	}
+	h.instances[event.Member.ID] = event.Member
+}
+
+func (h *LocalHandler) findAddressableInstance(memberID string) (registry.Member, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	member, ok := h.instances[memberID]
+	return member, ok && registry.IsAddressable(member.Status)
+}
+
+func (h *LocalHandler) selectInstanceByKey(service, key string) (registry.Member, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var selected registry.Member
+	var selectedScore uint64
+	found := false
+	for _, member := range h.instances {
+		if !registry.IsRoutable(member.Status) || !registryMemberHasService(member, service) {
+			continue
+		}
+		digest := sha256.Sum256([]byte(service + "\x00" + key + "\x00" + member.ID))
+		score := binary.BigEndian.Uint64(digest[:8])
+		if !found || score > selectedScore || score == selectedScore && member.ID < selected.ID {
+			selected = member
+			selectedScore = score
+			found = true
+		}
+	}
+	return selected, found
+}
+
+func registryMemberHasService(member registry.Member, service string) bool {
+	for _, candidate := range member.Services {
+		if candidate == service {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *LocalHandler) register(comp component.Component, opts []component.Option) error {

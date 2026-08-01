@@ -51,6 +51,15 @@ func WithMemberAddr(addr string) Option {
 	}
 }
 
+// WithLocalMemberID identifies the current process for exact-instance calls.
+// It lets singleton deployments use the same placement and owner-routing path
+// as registry-backed clusters without advertising a network member.
+func WithLocalMemberID(memberID string) Option {
+	return func(opt *cluster.Options) {
+		opt.LocalMemberID = memberID
+	}
+}
+
 // WithClientAddr sets the client-facing address for gate nodes.
 func WithClientAddr(addr string) Option {
 	return func(opt *cluster.Options) {

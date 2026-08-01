@@ -78,6 +78,9 @@ func ValidStatus(status MemberStatus) bool {
 	return status == MemberStatusActive || status == MemberStatusDraining || status == MemberStatusRetired
 }
 func IsRoutable(status MemberStatus) bool { return status == MemberStatusActive }
+func IsAddressable(status MemberStatus) bool {
+	return status == MemberStatusActive || status == MemberStatusDraining
+}
 func compactStrings(values []string) []string {
 	result := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))

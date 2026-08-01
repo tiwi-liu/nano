@@ -87,3 +87,23 @@ func TestLocalHandlerCallReturnsTypedSystemError(t *testing.T) {
 		t.Fatalf("error = %v, want CodeServiceNotFound", err)
 	}
 }
+
+func TestSingletonLocalHandlerSelectsAndCallsExplicitLocalMember(t *testing.T) {
+	n := newInternalCallTestNode(t)
+	n.Options.LocalMemberID = "dev-local"
+	n.handler.localServices = map[string]*component.Service{
+		"InternalCallService": {Name: "InternalCallService"},
+	}
+
+	memberID, err := n.handler.SelectByKey("InternalCallService", "room-42")
+	if err != nil || memberID != "dev-local" {
+		t.Fatalf("SelectByKey() = %q, %v; want dev-local", memberID, err)
+	}
+	var response []byte
+	if err := n.handler.CallTo(context.Background(), 7, memberID, "InternalCallService.Echo", []byte("hello"), &response); err != nil {
+		t.Fatalf("CallTo() error = %v", err)
+	}
+	if string(response) != "hello\a" {
+		t.Fatalf("response = %q", response)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,6 +25,8 @@ type Runtime struct {
 	lease          Lease
 	observer       Observer
 	status         atomic.Value
+	listenersMu    sync.RWMutex
+	listeners      []func(MemberStatus)
 	cancel         context.CancelFunc
 	done           chan struct{}
 }
@@ -54,6 +57,21 @@ func (r *Runtime) Status() MemberStatus {
 	return status
 }
 func (r *Runtime) AllowNewTraffic() bool { return IsRoutable(r.Status()) }
+func (r *Runtime) AddStatusListener(listener func(MemberStatus)) {
+	if r == nil || listener == nil {
+		return
+	}
+	r.listenersMu.Lock()
+	r.listeners = append(r.listeners, listener)
+	r.listenersMu.Unlock()
+	listener(r.Status())
+}
+func (r *Runtime) MarkRetired(ctx context.Context) error {
+	if r == nil || r.registry == nil || r.memberID == "" {
+		return ErrInvalidMember
+	}
+	return r.registry.UpdateStatus(ctx, r.memberID, MemberStatusRetired)
+}
 func (r *Runtime) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -118,6 +136,12 @@ func (r *Runtime) setStatus(status MemberStatus) {
 	r.status.Store(status)
 	if r.observer != nil {
 		r.observer.RegistryStatusChanged(r.memberID, r.role, status)
+	}
+	r.listenersMu.RLock()
+	listeners := append([]func(MemberStatus){}, r.listeners...)
+	r.listenersMu.RUnlock()
+	for _, listener := range listeners {
+		listener(status)
 	}
 }
 func ServiceCSV(services []string) string { return strings.Join(compactStrings(services), ",") }

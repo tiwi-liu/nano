@@ -54,6 +54,7 @@ type Options struct {
 	IsMaster                bool
 	AdvertiseAddr           string
 	MemberAddr              string
+	LocalMemberID           string
 	RetryInterval           time.Duration
 	ClientAddr              string
 	Components              *component.Components

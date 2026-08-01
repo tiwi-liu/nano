@@ -220,3 +220,56 @@ func TestRequestContextCallPropagatesContextAndUID(t *testing.T) {
 		t.Fatalf("called=%v response=%q", called, response)
 	}
 }
+
+type targetedInternalCaller struct {
+	internalCallerFunc
+	ctx    context.Context
+	target string
+}
+
+func (c *targetedInternalCaller) CallTo(ctx context.Context, uid int64, memberID, route string, request, response interface{}) error {
+	if uid != 100 || memberID != "texas-2" || route != "TexasHoldemService.GetTable" || request != "request" {
+		return errors.New("unexpected targeted call")
+	}
+	c.ctx = ctx
+	c.target = memberID
+	*response.(*string) = "table"
+	return nil
+}
+
+func TestRequestContextCallToTargetsExactMember(t *testing.T) {
+	s := New(newResponderTestEntity())
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	caller := &targetedInternalCaller{}
+	ctx, cancel := NewRequestContext(context.Background(), s, 1, caller)
+	defer cancel()
+	response := ""
+	if err := ctx.CallTo("texas-2", "TexasHoldemService.GetTable", "request", &response); err != nil {
+		t.Fatal(err)
+	}
+	if caller.target != "texas-2" || response != "table" {
+		t.Fatalf("target=%q response=%q", caller.target, response)
+	}
+}
+
+func TestRequestContextCallToContextUsesProvidedContext(t *testing.T) {
+	s := New(newResponderTestEntity())
+	if err := s.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	caller := &targetedInternalCaller{}
+	requestContext, cancelRequest := NewRequestContext(context.Background(), s, 1, caller)
+	cancelRequest()
+
+	callContext, cancelCall := context.WithCancel(context.Background())
+	defer cancelCall()
+	response := ""
+	if err := requestContext.CallToContext(callContext, "texas-2", "TexasHoldemService.GetTable", "request", &response); err != nil {
+		t.Fatalf("CallToContext() error = %v", err)
+	}
+	if caller.ctx != callContext || response != "table" {
+		t.Fatalf("caller context = %v response = %q", caller.ctx, response)
+	}
+}

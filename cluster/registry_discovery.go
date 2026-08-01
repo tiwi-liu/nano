@@ -74,6 +74,7 @@ func (n *Node) resyncRegistry(parent context.Context) {
 }
 
 func (n *Node) applyRegistryEvent(event registry.Event) {
+	n.handler.applyRegistryInstance(event, n.memberAddr())
 	member := registryMemberInfo(event.Member, n.memberAddr())
 	if event.Type == registry.EventDelete || member == nil {
 		if event.Member.ServiceAddr != "" {
@@ -89,6 +90,7 @@ func (n *Node) applyRegistryEvent(event registry.Event) {
 }
 
 func (n *Node) applyRegistryMembers(members []registry.Member) {
+	n.handler.syncRegistryInstances(members, n.memberAddr())
 	infos := make([]*clusterpb.MemberInfo, 0, len(members))
 	for _, member := range members {
 		info := registryMemberInfo(member, n.memberAddr())
