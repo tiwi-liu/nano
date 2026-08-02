@@ -56,6 +56,7 @@ type Session struct {
 	id           int64                  // session global unique id
 	uid          int64                  // binding user id
 	lastTime     int64                  // last heartbeat time
+	authTracked  uint32                 // whether the authenticated metric is active
 	entity       NetworkEntity          // low-level network entity
 	data         map[string]interface{} // session data store
 	router       *Router
@@ -117,8 +118,19 @@ func (s *Session) Bind(uid int64) error {
 			return ErrUIDMismatch
 		}
 		if atomic.CompareAndSwapInt64(&s.uid, 0, uid) {
+			if atomic.CompareAndSwapUint32(&s.authTracked, 0, 1) {
+				service.SessionStats.Authenticate()
+			}
 			return nil
 		}
+	}
+}
+
+// Release removes this session from authenticated-session metrics. It is
+// idempotent because connection shutdown can be observed by multiple goroutines.
+func (s *Session) Release() {
+	if s != nil && atomic.CompareAndSwapUint32(&s.authTracked, 1, 0) {
+		service.SessionStats.ReleaseAuthenticated()
 	}
 }
 
@@ -405,6 +417,7 @@ func (s *Session) Restore(data map[string]interface{}) {
 
 // Clear releases all data related to current session
 func (s *Session) Clear() {
+	s.Release()
 	s.Lock()
 	defer s.Unlock()
 

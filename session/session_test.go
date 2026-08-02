@@ -3,6 +3,8 @@ package session
 import (
 	"errors"
 	"testing"
+
+	"github.com/lonng/nano/service"
 )
 
 func TestNewSession(t *testing.T) {
@@ -13,6 +15,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSession_Bind(t *testing.T) {
+	authenticatedBefore := service.SessionStats.Authenticated()
 	s := New(nil)
 	if err := s.Bind(100); err != nil {
 		t.Fatal(err)
@@ -25,6 +28,25 @@ func TestSession_Bind(t *testing.T) {
 	}
 	if got := s.UID(); got != 100 {
 		t.Fatalf("UID = %d, want original UID 100", got)
+	}
+	if got := service.SessionStats.Authenticated(); got != authenticatedBefore+1 {
+		t.Fatalf("authenticated sessions = %d, want %d", got, authenticatedBefore+1)
+	}
+	s.Release()
+	if got := service.SessionStats.Authenticated(); got != authenticatedBefore {
+		t.Fatalf("authenticated sessions after release = %d, want %d", got, authenticatedBefore)
+	}
+}
+
+func TestSessionClearReleasesAuthenticatedMetric(t *testing.T) {
+	authenticatedBefore := service.SessionStats.Authenticated()
+	s := New(nil)
+	if err := s.Bind(101); err != nil {
+		t.Fatal(err)
+	}
+	s.Clear()
+	if got := service.SessionStats.Authenticated(); got != authenticatedBefore {
+		t.Fatalf("authenticated sessions after clear = %d, want %d", got, authenticatedBefore)
 	}
 }
 

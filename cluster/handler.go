@@ -49,6 +49,7 @@ import (
 	"github.com/lonng/nano/pipeline"
 	"github.com/lonng/nano/registry"
 	"github.com/lonng/nano/scheduler"
+	"github.com/lonng/nano/service"
 	"github.com/lonng/nano/session"
 )
 
@@ -437,6 +438,7 @@ func (h *LocalHandler) handle(conn net.Conn) {
 	// create a client agent and startup write gorontine
 	agent := newAgent(conn, h.pipeline, h.remoteProcess, h.currentNode.writeTimeout())
 	h.currentNode.storeSession(agent.session)
+	service.Connections.Increment()
 
 	// startup write goroutine
 	go agent.write()
@@ -448,6 +450,8 @@ func (h *LocalHandler) handle(conn net.Conn) {
 	// guarantee agent related resource be destroyed
 	defer func() {
 		h.currentNode.removeSession(agent.session.ID())
+		agent.session.Release()
+		service.Connections.Decrement()
 		request := &clusterpb.SessionClosedRequest{
 			SessionId: agent.session.ID(),
 		}

@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/lonng/nano/component"
+	"github.com/lonng/nano/service"
 	"github.com/lonng/nano/session"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
 func TestHandleRemovesLocalSessionOnDisconnect(t *testing.T) {
+	connectionsBefore := service.Connections.Count()
 	serverConn, clientConn := net.Pipe()
 	defer clientConn.Close()
 
@@ -38,6 +40,9 @@ func TestHandleRemovesLocalSessionOnDisconnect(t *testing.T) {
 		defer n.mu.RUnlock()
 		return len(n.sessions) == 1
 	})
+	if got := service.Connections.Count(); got != connectionsBefore+1 {
+		t.Fatalf("active connections = %d, want %d", got, connectionsBefore+1)
+	}
 
 	if err := clientConn.Close(); err != nil {
 		t.Fatal(err)
@@ -53,6 +58,9 @@ func TestHandleRemovesLocalSessionOnDisconnect(t *testing.T) {
 	defer n.mu.RUnlock()
 	if len(n.sessions) != 0 {
 		t.Fatalf("sessions = %d, want 0", len(n.sessions))
+	}
+	if got := service.Connections.Count(); got != connectionsBefore {
+		t.Fatalf("active connections after close = %d, want %d", got, connectionsBefore)
 	}
 }
 
