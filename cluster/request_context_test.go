@@ -10,7 +10,7 @@ import (
 
 func TestNewRequestContextAppliesConfiguredTimeout(t *testing.T) {
 	h := &LocalHandler{currentNode: &Node{Options: Options{RequestTimeout: 20 * time.Millisecond}}}
-	ctx, cancel := h.newRequestContext(session.New(nil), 1)
+	ctx, cancel := h.newRequestContext(context.Background(), session.New(nil), 1)
 	defer cancel()
 
 	select {
@@ -25,7 +25,7 @@ func TestNewRequestContextAppliesConfiguredTimeout(t *testing.T) {
 
 func TestNewRequestContextUsesDefaultTimeout(t *testing.T) {
 	h := &LocalHandler{currentNode: &Node{}}
-	ctx, cancel := h.newRequestContext(session.New(nil), 1)
+	ctx, cancel := h.newRequestContext(context.Background(), session.New(nil), 1)
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()

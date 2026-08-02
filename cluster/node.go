@@ -491,7 +491,7 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 		Route: req.Route,
 		Data:  req.Data,
 	}
-	n.handler.localProcess(handler, req.Id, s, msg)
+	n.handler.localProcess(ctx, handler, req.Id, s, msg)
 	return &clusterpb.MemberHandleResponse{}, nil
 }
 
@@ -516,7 +516,7 @@ func (n *Node) HandleNotify(ctx context.Context, req *clusterpb.NotifyMessage) (
 		Route: req.Route,
 		Data:  req.Data,
 	}
-	n.handler.localProcess(handler, 0, s, msg)
+	n.handler.localProcess(ctx, handler, 0, s, msg)
 	return &clusterpb.MemberHandleResponse{}, nil
 }
 

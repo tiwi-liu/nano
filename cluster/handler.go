@@ -204,12 +204,17 @@ func (h *LocalHandler) SelectByKey(service, key string) (string, error) {
 	return "", &InternalCallError{Code: errcode.CodeServiceNotFound}
 }
 
-func (h *LocalHandler) newRequestContext(s *session.Session, mid uint64) (*session.RequestContext, context.CancelFunc) {
+func (h *LocalHandler) newRequestContext(parent context.Context, s *session.Session, mid uint64) (*session.RequestContext, context.CancelFunc) {
 	timeout := h.currentNode.RequestTimeout
 	if timeout <= 0 {
 		timeout = DefaultRequestTimeout
 	}
-	parent, parentCancel := context.WithTimeout(context.Background(), timeout)
+	if parent == nil {
+		parent = context.Background()
+	}
+	// Forwarded handlers run asynchronously after the gRPC method returns. Keep
+	// trace values, but let the request timeout own the handler cancellation.
+	parent, parentCancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
 	ctx, cancel := session.NewRequestContext(parent, s, mid, h)
 	return ctx, func() {
 		cancel()
@@ -683,7 +688,7 @@ func (h *LocalHandler) processMessage(agent *agent, msg *message.Message) {
 	if !found {
 		h.remoteProcess(agent.session, msg, false)
 	} else {
-		h.localProcess(handler, mid, agent.session, msg)
+		h.localProcess(context.Background(), handler, mid, agent.session, msg)
 	}
 }
 
@@ -696,7 +701,7 @@ func (h *LocalHandler) handleWS(conn *websocket.Conn) {
 	go h.handle(c)
 }
 
-func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, session *session.Session, msg *message.Message) {
+func (h *LocalHandler) localProcess(parent context.Context, handler *component.Handler, mid uint64, session *session.Session, msg *message.Message) {
 	if pipe := h.pipeline; pipe != nil {
 		err := pipe.Inbound().Process(session, msg)
 		if err != nil {
@@ -736,7 +741,7 @@ func (h *LocalHandler) localProcess(handler *component.Handler, mid uint64, sess
 		log.Println(fmt.Sprintf("UID=%d, Message={%s}, Data=%+v", session.UID(), msg.String(), data))
 	}
 
-	requestContext, cancel := h.newRequestContext(session, mid)
+	requestContext, cancel := h.newRequestContext(parent, session, mid)
 	stopTimeoutResponse := context.AfterFunc(requestContext, func() {
 		if errors.Is(requestContext.Err(), context.DeadlineExceeded) {
 			requestContext.RespondSystemError(errcode.CodeRequestTimeout)
