@@ -77,6 +77,20 @@ func (a *acceptor) SendResponse(mid uint64, code errcode.Code, v interface{}) er
 	return err
 }
 
+// Kick asks the gateway that owns the client connection to send a kick packet
+// before closing the session.
+func (a *acceptor) Kick(data []byte) error {
+	request := &clusterpb.CloseSessionRequest{
+		SessionId: a.sid,
+		Kick:      true,
+		Data:      data,
+	}
+	ctx, cancel := a.node.rpcContext(context.Background())
+	_, err := a.gateClient.CloseSession(ctx, request)
+	cancel()
+	return err
+}
+
 // Close implements the session.NetworkEntity interface
 func (a *acceptor) Close() error {
 	// TODO: buffer

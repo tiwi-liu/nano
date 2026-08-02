@@ -40,11 +40,17 @@ type NetworkEntity interface {
 	RemoteAddr() net.Addr
 }
 
+type kickEntity interface {
+	Kick([]byte) error
+}
+
 var (
 	//ErrIllegalUID represents a invalid uid
 	ErrIllegalUID = errors.New("illegal uid")
 	// ErrUIDMismatch indicates an attempt to change an established identity.
 	ErrUIDMismatch = errors.New("session uid mismatch")
+	// ErrKickUnsupported indicates that the session is not backed by a client gateway connection.
+	ErrKickUnsupported = errors.New("session entity does not support kick")
 )
 
 // Session represents a client session which could storage temp data during low-level
@@ -138,6 +144,15 @@ func (s *Session) Release() {
 // all related data should be Clear explicitly in Session closed callback
 func (s *Session) Close() {
 	s.entity.Close()
+}
+
+// Kick sends the protocol-level kick packet and lets the gateway close the connection.
+func (s *Session) Kick(data []byte) error {
+	entity, ok := s.entity.(kickEntity)
+	if !ok {
+		return ErrKickUnsupported
+	}
+	return entity.Kick(data)
 }
 
 // RemoteAddr returns the remote network address.

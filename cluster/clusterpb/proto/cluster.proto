@@ -97,6 +97,8 @@ message SessionClosedResponse {}
 
 message CloseSessionRequest {
     int64 sessionId = 1;
+    bool kick = 2;
+    bytes data = 3;
 }
 
 message CloseSessionResponse {}

@@ -70,11 +70,12 @@ type (
 	}
 
 	pendingMessage struct {
-		typ     message.Type // message type
-		err     message.ErrCode
-		route   string      // message route(push)
-		mid     uint64      // response message id(response)
-		payload interface{} // payload
+		typ           message.Type // message type
+		err           message.ErrCode
+		route         string      // message route(push)
+		mid           uint64      // response message id(response)
+		payload       interface{} // payload
+		controlPacket []byte
 	}
 )
 
@@ -186,6 +187,19 @@ func (a *agent) SendResponse(mid uint64, code errcode.Code, v interface{}) error
 	return a.send(pendingMessage{typ: message.Response, mid: mid, err: errCode, payload: v})
 }
 
+// Kick queues a protocol-level kick packet. The write loop closes the connection
+// only after the packet has been written.
+func (a *agent) Kick(data []byte) error {
+	if a.status() == statusClosed {
+		return ErrBrokenPipe
+	}
+	p, err := codec.Encode(packet.Kick, data)
+	if err != nil {
+		return err
+	}
+	return a.send(pendingMessage{controlPacket: p})
+}
+
 // Close, implementation for session.NetworkEntity interface
 // Close closes the agent, clean inner state and close low-level connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
@@ -257,6 +271,10 @@ func (a *agent) write() {
 
 		case data, ok := <-a.chSend:
 			if !ok {
+				return
+			}
+			if data.controlPacket != nil {
+				a.writePacket(data.controlPacket)
 				return
 			}
 			payload, err := message.Serialize(data.payload)

@@ -612,7 +612,13 @@ func (n *Node) CloseSession(_ context.Context, req *clusterpb.CloseSessionReques
 	delete(n.sessions, req.SessionId)
 	n.mu.Unlock()
 	if found {
-		s.Close()
+		if req.GetKick() {
+			if err := s.Kick(req.GetData()); err != nil {
+				s.Close()
+			}
+		} else {
+			s.Close()
+		}
 	}
 	return &clusterpb.CloseSessionResponse{}, nil
 }
