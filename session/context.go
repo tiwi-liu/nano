@@ -27,6 +27,38 @@ type InternalInstanceSelector interface {
 	SelectByKey(service, key string) (string, error)
 }
 
+type DetachedCaller struct {
+	caller InternalCaller
+	uid    int64
+}
+
+func (c *RequestContext) DetachCaller() (*DetachedCaller, error) {
+	if c == nil || c.caller == nil {
+		return nil, ErrInternalCallUnavailable
+	}
+	if _, ok := c.caller.(TargetedInternalCaller); !ok {
+		return nil, ErrInternalCallUnavailable
+	}
+	if _, ok := c.caller.(InternalInstanceSelector); !ok {
+		return nil, ErrInternalCallUnavailable
+	}
+	return &DetachedCaller{caller: c.caller, uid: c.UID()}, nil
+}
+
+func (c *DetachedCaller) CallTo(ctx context.Context, memberID, route string, request, response interface{}) error {
+	if c == nil || c.caller == nil || ctx == nil {
+		return ErrInternalCallUnavailable
+	}
+	return c.caller.(TargetedInternalCaller).CallTo(ctx, c.uid, memberID, route, request, response)
+}
+
+func (c *DetachedCaller) SelectByKey(service, key string) (string, error) {
+	if c == nil || c.caller == nil {
+		return "", ErrInternalCallUnavailable
+	}
+	return c.caller.(InternalInstanceSelector).SelectByKey(service, key)
+}
+
 type ResponseSender func(value interface{}, code errcode.Code) error
 
 const (
