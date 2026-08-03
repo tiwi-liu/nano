@@ -71,6 +71,8 @@ type Options struct {
 	ServiceRegistry         registry.Registry
 	UnaryServerInterceptors []grpc.UnaryServerInterceptor
 	UnaryClientInterceptors []grpc.UnaryClientInterceptor
+	SessionBoundCallback    func(*session.Session)
+	SessionClosedCallback   func(*session.Session)
 }
 
 const DefaultRequestTimeout = 5 * time.Second
@@ -566,9 +568,13 @@ func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage)
 	if s == nil {
 		return &clusterpb.MemberHandleResponse{}, fmt.Errorf("session not found: %v", req.SessionId)
 	}
+	wasUnbound := s.UID() == 0
 	if !bindForwardedUID(s, req.Uid, req.Id) {
 		log.Println(fmt.Sprintf("Reject forwarded response identity mismatch, SID=%d", req.SessionId))
 		return &clusterpb.MemberHandleResponse{}, nil
+	}
+	if wasUnbound && s.UID() > 0 && n.SessionBoundCallback != nil {
+		n.SessionBoundCallback(s)
 	}
 	code, ok := errcode.FromWire(req.ErrCode)
 	if !ok {

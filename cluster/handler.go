@@ -449,6 +449,9 @@ func (h *LocalHandler) handle(conn net.Conn) {
 
 	// guarantee agent related resource be destroyed
 	defer func() {
+		if h.currentNode.SessionClosedCallback != nil {
+			h.currentNode.SessionClosedCallback(agent.session)
+		}
 		h.currentNode.removeSession(agent.session.ID())
 		agent.session.Release()
 		service.Connections.Decrement()

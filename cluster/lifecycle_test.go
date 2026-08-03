@@ -64,6 +64,44 @@ func TestHandleRemovesLocalSessionOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestHandleNotifiesSessionClosed(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	closed := make(chan *session.Session, 1)
+	n := &Node{
+		Options: Options{
+			Components:            &component.Components{},
+			RPCTimeout:            time.Millisecond,
+			SessionClosedCallback: func(client *session.Session) { closed <- client },
+		},
+		ServiceAddr: "127.0.0.1:0",
+		sessions:    map[int64]*session.Session{},
+	}
+	n.cluster = newCluster(n)
+	n.handler = NewHandler(n, nil)
+
+	done := make(chan struct{})
+	go func() {
+		n.handler.handle(serverConn)
+		close(done)
+	}()
+	waitFor(t, time.Second, func() bool {
+		n.mu.RLock()
+		defer n.mu.RUnlock()
+		return len(n.sessions) == 1
+	})
+	_ = clientConn.Close()
+
+	select {
+	case client := <-closed:
+		if client == nil {
+			t.Fatal("closed callback received nil session")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("session close callback was not invoked")
+	}
+	<-done
+}
+
 func TestClusterAuthUnaryInterceptor(t *testing.T) {
 	n := &Node{Options: Options{ClusterAuthToken: "secret"}}
 	interceptor := n.authUnaryInterceptor()

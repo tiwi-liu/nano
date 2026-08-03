@@ -185,6 +185,32 @@ func TestHandleResponsePropagatesUIDToGatewaySession(t *testing.T) {
 	}
 }
 
+func TestHandleResponseNotifiesFirstGatewayUIDBindingOnce(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	s := session.New(entity)
+	bound := 0
+	n := &Node{
+		Options: Options{SessionBoundCallback: func(got *session.Session) {
+			if got != s {
+				t.Fatalf("bound session = %p, want %p", got, s)
+			}
+			bound++
+		}},
+		sessions: map[int64]*session.Session{10: s},
+	}
+
+	for id := uint64(1); id <= 2; id++ {
+		if _, err := n.HandleResponse(context.Background(), &clusterpb.ResponseMessage{
+			SessionId: 10, Id: id, Uid: 100, ErrCode: uint64(errcode.CodeOk),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if bound != 1 {
+		t.Fatalf("binding callbacks = %d, want 1", bound)
+	}
+}
+
 func TestGatewayRouteUsesAdvertisedMemberAddress(t *testing.T) {
 	entity := &handlerResponseEntity{}
 	s := session.New(entity)

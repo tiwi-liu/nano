@@ -14,6 +14,7 @@ import (
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/serialize"
 	"github.com/lonng/nano/service"
+	"github.com/lonng/nano/session"
 	"google.golang.org/grpc"
 )
 
@@ -212,6 +213,22 @@ func WithHandshakeValidator(fn func([]byte) error) Option {
 func WithNodeId(nodeId uint64) Option {
 	return func(opt *cluster.Options) {
 		service.ResetNodeId(nodeId)
+	}
+}
+
+// WithSessionBoundCallback observes the first authenticated UID binding on a
+// client connection owned by this node.
+func WithSessionBoundCallback(fn func(*session.Session)) Option {
+	return func(opt *cluster.Options) {
+		opt.SessionBoundCallback = fn
+	}
+}
+
+// WithSessionClosedCallback observes a client connection immediately before
+// it is removed from this node's local session table.
+func WithSessionClosedCallback(fn func(*session.Session)) Option {
+	return func(opt *cluster.Options) {
+		opt.SessionClosedCallback = fn
 	}
 }
 
