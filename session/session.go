@@ -58,14 +58,15 @@ var (
 // Session instance related to the client will be passed to Handler method as the first
 // parameter.
 type Session struct {
-	sync.RWMutex                        // protect data
-	id           int64                  // session global unique id
-	uid          int64                  // binding user id
-	lastTime     int64                  // last heartbeat time
-	authTracked  uint32                 // whether the authenticated metric is active
-	entity       NetworkEntity          // low-level network entity
-	data         map[string]interface{} // session data store
-	router       *Router
+	sync.RWMutex                           // protect data
+	id              int64                  // session global unique id
+	uid             int64                  // binding user id
+	lastTime        int64                  // last heartbeat time
+	authTracked     uint32                 // whether the authenticated metric is active
+	connectionEpoch uint64                 // gateway ownership generation for targeted delivery
+	entity          NetworkEntity          // low-level network entity
+	data            map[string]interface{} // session data store
+	router          *Router
 }
 
 // New returns a new session instance
@@ -108,6 +109,17 @@ func (s *Session) ID() int64 {
 // UID returns uid that bind to current session
 func (s *Session) UID() int64 {
 	return atomic.LoadInt64(&s.uid)
+}
+
+// SetConnectionEpoch records the gateway ownership generation assigned by the
+// distributed session directory.
+func (s *Session) SetConnectionEpoch(epoch uint64) {
+	atomic.StoreUint64(&s.connectionEpoch, epoch)
+}
+
+// ConnectionEpoch returns the gateway ownership generation for this session.
+func (s *Session) ConnectionEpoch() uint64 {
+	return atomic.LoadUint64(&s.connectionEpoch)
 }
 
 // Bind bind UID to current session

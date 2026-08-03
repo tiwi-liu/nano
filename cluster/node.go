@@ -46,6 +46,8 @@ import (
 	"github.com/lonng/nano/scheduler"
 	"github.com/lonng/nano/session"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Options contains some configurations for current node
@@ -557,7 +559,10 @@ func bindForwardedUID(s *session.Session, uid int64, mid uint64) bool {
 func (n *Node) HandlePush(_ context.Context, req *clusterpb.PushMessage) (*clusterpb.MemberHandleResponse, error) {
 	s := n.findSession(req.SessionId)
 	if s == nil {
-		return &clusterpb.MemberHandleResponse{}, fmt.Errorf("session not found: %v", req.SessionId)
+		return &clusterpb.MemberHandleResponse{}, status.Errorf(codes.NotFound, "session not found: %v", req.SessionId)
+	}
+	if err := validateTargetSession(s, req.GetUid(), req.GetConnectionEpoch()); err != nil {
+		return &clusterpb.MemberHandleResponse{}, err
 	}
 	return &clusterpb.MemberHandleResponse{}, s.Push(req.Route, req.Data)
 }
@@ -615,8 +620,17 @@ func (n *Node) SessionClosed(_ context.Context, req *clusterpb.SessionClosedRequ
 func (n *Node) CloseSession(_ context.Context, req *clusterpb.CloseSessionRequest) (*clusterpb.CloseSessionResponse, error) {
 	n.mu.Lock()
 	s, found := n.sessions[req.SessionId]
+	if found {
+		if err := validateTargetSession(s, req.GetUid(), req.GetConnectionEpoch()); err != nil {
+			n.mu.Unlock()
+			return &clusterpb.CloseSessionResponse{}, err
+		}
+	}
 	delete(n.sessions, req.SessionId)
 	n.mu.Unlock()
+	if !found && (req.GetUid() > 0 || req.GetConnectionEpoch() > 0) {
+		return &clusterpb.CloseSessionResponse{}, status.Errorf(codes.NotFound, "session not found: %v", req.SessionId)
+	}
 	if found {
 		if req.GetKick() {
 			if err := s.Kick(req.GetData()); err != nil {
@@ -627,6 +641,19 @@ func (n *Node) CloseSession(_ context.Context, req *clusterpb.CloseSessionReques
 		}
 	}
 	return &clusterpb.CloseSessionResponse{}, nil
+}
+
+func validateTargetSession(client *session.Session, uid int64, epoch uint64) error {
+	if client == nil {
+		return status.Error(codes.NotFound, "session not found")
+	}
+	if uid > 0 && client.UID() != uid {
+		return status.Errorf(codes.FailedPrecondition, "session uid mismatch: got %d, want %d", client.UID(), uid)
+	}
+	if epoch > 0 && client.ConnectionEpoch() != epoch {
+		return status.Errorf(codes.FailedPrecondition, "session epoch mismatch: got %d, want %d", client.ConnectionEpoch(), epoch)
+	}
+	return nil
 }
 
 // ticker send heartbeat register info to master

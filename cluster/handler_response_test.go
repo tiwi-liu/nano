@@ -16,13 +16,17 @@ import (
 )
 
 type handlerResponseEntity struct {
-	code errcode.Code
-	body interface{}
-	err  error
+	code   errcode.Code
+	body   interface{}
+	err    error
+	pushes int
 }
 
-func (e *handlerResponseEntity) Push(string, interface{}) error { return nil }
-func (e *handlerResponseEntity) RPC(string, interface{}) error  { return nil }
+func (e *handlerResponseEntity) Push(string, interface{}) error {
+	e.pushes++
+	return nil
+}
+func (e *handlerResponseEntity) RPC(string, interface{}) error { return nil }
 func (e *handlerResponseEntity) SendResponse(_ uint64, code errcode.Code, body interface{}) error {
 	if e.err != nil {
 		err := e.err
@@ -208,6 +212,33 @@ func TestHandleResponseNotifiesFirstGatewayUIDBindingOnce(t *testing.T) {
 	}
 	if bound != 1 {
 		t.Fatalf("binding callbacks = %d, want 1", bound)
+	}
+}
+
+func TestHandlePushRejectsStaleConnectionEpoch(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	client := session.New(entity)
+	if err := client.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	client.SetConnectionEpoch(2)
+	n := &Node{sessions: map[int64]*session.Session{client.ID(): client}}
+
+	if _, err := n.HandlePush(context.Background(), &clusterpb.PushMessage{
+		SessionId: client.ID(), Route: "UserService.Notify", Uid: 100, ConnectionEpoch: 1,
+	}); err == nil {
+		t.Fatal("stale connection epoch should be rejected")
+	}
+	if entity.pushes != 0 {
+		t.Fatalf("pushes = %d, want 0", entity.pushes)
+	}
+	if _, err := n.HandlePush(context.Background(), &clusterpb.PushMessage{
+		SessionId: client.ID(), Route: "UserService.Notify", Uid: 100, ConnectionEpoch: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if entity.pushes != 1 {
+		t.Fatalf("pushes = %d, want 1", entity.pushes)
 	}
 }
 

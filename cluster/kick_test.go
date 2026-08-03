@@ -123,3 +123,25 @@ func TestNodeCloseSessionUsesRequestedDisconnectMode(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeCloseSessionRejectsStaleConnectionEpoch(t *testing.T) {
+	entity := &kickTestEntity{}
+	client := session.New(entity)
+	if err := client.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	client.SetConnectionEpoch(7)
+	node := &Node{sessions: map[int64]*session.Session{client.ID(): client}}
+
+	if _, err := node.CloseSession(context.Background(), &clusterpb.CloseSessionRequest{
+		SessionId: client.ID(), Kick: true, Uid: 100, ConnectionEpoch: 6,
+	}); err == nil {
+		t.Fatal("stale connection epoch should be rejected")
+	}
+	if len(entity.events) != 0 {
+		t.Fatalf("events = %v, want no disconnect", entity.events)
+	}
+	if _, found := node.sessions[client.ID()]; !found {
+		t.Fatal("current session was removed by stale close request")
+	}
+}

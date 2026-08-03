@@ -62,6 +62,8 @@ message PushMessage {
     int64 sessionId = 1;
     string route = 2;
     bytes data = 3;
+    int64 uid = 4;
+    uint64 connectionEpoch = 5;
 }
 
 message MemberHandleResponse {}
@@ -99,6 +101,8 @@ message CloseSessionRequest {
     int64 sessionId = 1;
     bool kick = 2;
     bytes data = 3;
+    int64 uid = 4;
+    uint64 connectionEpoch = 5;
 }
 
 message CloseSessionResponse {}

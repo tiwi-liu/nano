@@ -11,7 +11,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const clusterAuthMetadataKey = "nano-cluster-auth"
+const ClusterAuthMetadataKey = "nano-cluster-auth"
+
+const clusterAuthMetadataKey = ClusterAuthMetadataKey
 
 func (n *Node) rpcTimeout() time.Duration {
 	if n != nil && n.RPCTimeout > 0 {
