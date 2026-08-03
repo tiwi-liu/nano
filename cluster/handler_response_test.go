@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lonng/nano/cluster/clusterpb"
@@ -12,7 +14,9 @@ import (
 	"github.com/lonng/nano/internal/message"
 	"github.com/lonng/nano/pkg/errcode"
 	"github.com/lonng/nano/session"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type handlerResponseEntity struct {
@@ -21,6 +25,16 @@ type handlerResponseEntity struct {
 	err    error
 	pushes int
 }
+
+type concurrentHandlerResponseEntity struct{}
+
+func (*concurrentHandlerResponseEntity) Push(string, interface{}) error { return nil }
+func (*concurrentHandlerResponseEntity) RPC(string, interface{}) error  { return nil }
+func (*concurrentHandlerResponseEntity) SendResponse(uint64, errcode.Code, interface{}) error {
+	return nil
+}
+func (*concurrentHandlerResponseEntity) Close() error         { return nil }
+func (*concurrentHandlerResponseEntity) RemoteAddr() net.Addr { return nil }
 
 func (e *handlerResponseEntity) Push(string, interface{}) error {
 	e.pushes++
@@ -132,7 +146,7 @@ func TestForwardedUIDMismatchGetsPermissionDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if bindForwardedUID(s, 200, 9) {
+	if accepted, _ := bindForwardedUID(s, 200, 9); accepted {
 		t.Fatal("mismatched forwarded UID should be rejected")
 	}
 	if entity.code != errcode.CodePermissionDenied {
@@ -215,6 +229,36 @@ func TestHandleResponseNotifiesFirstGatewayUIDBindingOnce(t *testing.T) {
 	}
 }
 
+func TestHandleResponseConcurrentUIDBindingNotifiesOnce(t *testing.T) {
+	entity := &concurrentHandlerResponseEntity{}
+	s := session.New(entity)
+	var bound atomic.Int64
+	n := &Node{
+		Options:  Options{SessionBoundCallback: func(*session.Session) { bound.Add(1) }},
+		sessions: map[int64]*session.Session{10: s},
+	}
+
+	const responses = 64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(responses)
+	for id := uint64(1); id <= responses; id++ {
+		go func(id uint64) {
+			defer wg.Done()
+			<-start
+			_, _ = n.HandleResponse(context.Background(), &clusterpb.ResponseMessage{
+				SessionId: 10, Id: id, Uid: 100, ErrCode: uint64(errcode.CodeOk),
+			})
+		}(id)
+	}
+	close(start)
+	wg.Wait()
+
+	if got := bound.Load(); got != 1 {
+		t.Fatalf("binding callbacks = %d, want 1", got)
+	}
+}
+
 func TestHandlePushRejectsStaleConnectionEpoch(t *testing.T) {
 	entity := &handlerResponseEntity{}
 	client := session.New(entity)
@@ -239,6 +283,25 @@ func TestHandlePushRejectsStaleConnectionEpoch(t *testing.T) {
 	}
 	if entity.pushes != 1 {
 		t.Fatalf("pushes = %d, want 1", entity.pushes)
+	}
+}
+
+func TestHandlePushTreatsUnpublishedLocalEpochAsTemporarilyUnavailable(t *testing.T) {
+	entity := &handlerResponseEntity{}
+	client := session.New(entity)
+	if err := client.Bind(100); err != nil {
+		t.Fatal(err)
+	}
+	n := &Node{sessions: map[int64]*session.Session{client.ID(): client}}
+
+	_, err := n.HandlePush(context.Background(), &clusterpb.PushMessage{
+		SessionId: client.ID(), Route: "UserService.Notify", Uid: 100, ConnectionEpoch: 1,
+	})
+	if got := status.Code(err); got != codes.Unavailable {
+		t.Fatalf("HandlePush() code = %s, want %s", got, codes.Unavailable)
+	}
+	if entity.pushes != 0 {
+		t.Fatalf("pushes = %d, want 0", entity.pushes)
 	}
 }
 

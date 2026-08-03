@@ -479,7 +479,7 @@ func (n *Node) HandleRequest(ctx context.Context, req *clusterpb.RequestMessage)
 		log.Println(fmt.Sprintf("Reject forwarded request identity, SID=%d, Error=%v", req.SessionId, identityErr))
 		return &clusterpb.MemberHandleResponse{}, nil
 	}
-	if !bindForwardedUID(s, uid, req.Id) {
+	if accepted, _ := bindForwardedUID(s, uid, req.Id); !accepted {
 		log.Println(fmt.Sprintf("Reject forwarded request identity mismatch, SID=%d", req.SessionId))
 		return &clusterpb.MemberHandleResponse{}, nil
 	}
@@ -508,7 +508,7 @@ func (n *Node) HandleNotify(ctx context.Context, req *clusterpb.NotifyMessage) (
 	if identityErr != nil {
 		return nil, fmt.Errorf("forwarded notify identity rejected: %w", identityErr)
 	}
-	if !bindForwardedUID(s, uid, 0) {
+	if accepted, _ := bindForwardedUID(s, uid, 0); !accepted {
 		return nil, fmt.Errorf("forwarded notify identity mismatch")
 	}
 	handler, found := n.handler.localHandlers[req.Route]
@@ -536,23 +536,24 @@ func forwardedUID(ctx context.Context) (int64, error) {
 	return uid, nil
 }
 
-func bindForwardedUID(s *session.Session, uid int64, mid uint64) bool {
+func bindForwardedUID(s *session.Session, uid int64, mid uint64) (bool, bool) {
 	if s == nil || (uid == 0 && s.UID() != 0) {
 		if s != nil && mid > 0 {
 			s.NetworkEntity().SendResponse(mid, errcode.CodePermissionDenied, nil)
 		}
-		return false
+		return false, false
 	}
 	if uid == 0 {
-		return true
+		return true, false
 	}
-	if err := s.Bind(uid); err != nil {
+	bound, err := s.BindWithResult(uid)
+	if err != nil {
 		if mid > 0 {
 			s.NetworkEntity().SendResponse(mid, errcode.CodePermissionDenied, nil)
 		}
-		return false
+		return false, false
 	}
-	return true
+	return true, bound
 }
 
 // 网关接受来之其他节点的中继Push
@@ -573,12 +574,12 @@ func (n *Node) HandleResponse(_ context.Context, req *clusterpb.ResponseMessage)
 	if s == nil {
 		return &clusterpb.MemberHandleResponse{}, fmt.Errorf("session not found: %v", req.SessionId)
 	}
-	wasUnbound := s.UID() == 0
-	if !bindForwardedUID(s, req.Uid, req.Id) {
+	accepted, bound := bindForwardedUID(s, req.Uid, req.Id)
+	if !accepted {
 		log.Println(fmt.Sprintf("Reject forwarded response identity mismatch, SID=%d", req.SessionId))
 		return &clusterpb.MemberHandleResponse{}, nil
 	}
-	if wasUnbound && s.UID() > 0 && n.SessionBoundCallback != nil {
+	if bound && n.SessionBoundCallback != nil {
 		n.SessionBoundCallback(s)
 	}
 	code, ok := errcode.FromWire(req.ErrCode)
@@ -650,8 +651,14 @@ func validateTargetSession(client *session.Session, uid int64, epoch uint64) err
 	if uid > 0 && client.UID() != uid {
 		return status.Errorf(codes.FailedPrecondition, "session uid mismatch: got %d, want %d", client.UID(), uid)
 	}
-	if epoch > 0 && client.ConnectionEpoch() != epoch {
-		return status.Errorf(codes.FailedPrecondition, "session epoch mismatch: got %d, want %d", client.ConnectionEpoch(), epoch)
+	if epoch > 0 {
+		currentEpoch := client.ConnectionEpoch()
+		if currentEpoch == 0 {
+			return status.Error(codes.Unavailable, "session ownership registration is pending")
+		}
+		if currentEpoch != epoch {
+			return status.Errorf(codes.FailedPrecondition, "session epoch mismatch: got %d, want %d", currentEpoch, epoch)
+		}
 	}
 	return nil
 }

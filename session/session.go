@@ -124,22 +124,29 @@ func (s *Session) ConnectionEpoch() uint64 {
 
 // Bind bind UID to current session
 func (s *Session) Bind(uid int64) error {
+	_, err := s.BindWithResult(uid)
+	return err
+}
+
+// BindWithResult binds UID to the session and reports whether this call made
+// the first successful transition from unauthenticated to authenticated.
+func (s *Session) BindWithResult(uid int64) (bool, error) {
 	if uid < 1 {
-		return ErrIllegalUID
+		return false, ErrIllegalUID
 	}
 	for {
 		current := atomic.LoadInt64(&s.uid)
 		if current == uid {
-			return nil
+			return false, nil
 		}
 		if current != 0 {
-			return ErrUIDMismatch
+			return false, ErrUIDMismatch
 		}
 		if atomic.CompareAndSwapInt64(&s.uid, 0, uid) {
 			if atomic.CompareAndSwapUint32(&s.authTracked, 0, 1) {
 				service.SessionStats.Authenticate()
 			}
-			return nil
+			return true, nil
 		}
 	}
 }

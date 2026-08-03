@@ -38,6 +38,19 @@ func TestSession_Bind(t *testing.T) {
 	}
 }
 
+func TestSessionBindWithResultReportsOnlyFirstTransition(t *testing.T) {
+	s := New(nil)
+
+	bound, err := s.BindWithResult(100)
+	if err != nil || !bound {
+		t.Fatalf("first BindWithResult() = (%v, %v), want (true, nil)", bound, err)
+	}
+	bound, err = s.BindWithResult(100)
+	if err != nil || bound {
+		t.Fatalf("repeated BindWithResult() = (%v, %v), want (false, nil)", bound, err)
+	}
+}
+
 func TestSessionClearReleasesAuthenticatedMetric(t *testing.T) {
 	authenticatedBefore := service.SessionStats.Authenticated()
 	s := New(nil)
