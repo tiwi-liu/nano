@@ -201,6 +201,11 @@ func (h *LocalHandler) SelectByKey(service, key string) (string, error) {
 		if _, local := h.localServices[service]; local {
 			return h.currentNode.LocalMemberID, nil
 		}
+		if separator := strings.IndexByte(service, '@'); separator > 0 {
+			if _, local := h.localServices[service[:separator]]; local {
+				return h.currentNode.LocalMemberID, nil
+			}
+		}
 	}
 	return "", &InternalCallError{Code: errcode.CodeServiceNotFound}
 }
@@ -307,11 +312,21 @@ func (h *LocalHandler) selectInstanceByKey(service, key string) (registry.Member
 
 func registryMemberHasService(member registry.Member, service string) bool {
 	for _, candidate := range member.Services {
-		if candidate == service {
+		if serviceNameMatches(candidate, service) {
 			return true
 		}
 	}
 	return false
+}
+
+// A versioned service alias such as CarromService@carrom-a2-p1 is a routing
+// capability. The RPC itself remains CarromService.Method.
+func serviceNameMatches(candidate, requested string) bool {
+	if candidate == requested {
+		return true
+	}
+	separator := strings.IndexByte(candidate, '@')
+	return separator > 0 && candidate[:separator] == requested
 }
 
 func (h *LocalHandler) register(comp component.Component, opts []component.Option) error {

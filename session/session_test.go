@@ -15,31 +15,40 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSession_Bind(t *testing.T) {
+	const testUID int64 = 900100001
 	authenticatedBefore := service.SessionStats.Authenticated()
+	onlineBefore := service.SessionStats.OnlinePlayers()
 	s := New(nil)
-	if err := s.Bind(100); err != nil {
+	if err := s.Bind(testUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Bind(100); err != nil {
+	if err := s.Bind(testUID); err != nil {
 		t.Fatalf("binding the same UID should be idempotent: %v", err)
 	}
-	if err := s.Bind(200); !errors.Is(err, ErrUIDMismatch) {
+	if err := s.Bind(testUID + 1); !errors.Is(err, ErrUIDMismatch) {
 		t.Fatalf("Bind error = %v, want ErrUIDMismatch", err)
 	}
-	if got := s.UID(); got != 100 {
-		t.Fatalf("UID = %d, want original UID 100", got)
+	if got := s.UID(); got != testUID {
+		t.Fatalf("UID = %d, want original UID %d", got, testUID)
 	}
 	if got := service.SessionStats.Authenticated(); got != authenticatedBefore+1 {
 		t.Fatalf("authenticated sessions = %d, want %d", got, authenticatedBefore+1)
+	}
+	if got := service.SessionStats.OnlinePlayers(); got != onlineBefore+1 {
+		t.Fatalf("online players = %d, want %d", got, onlineBefore+1)
 	}
 	s.Release()
 	if got := service.SessionStats.Authenticated(); got != authenticatedBefore {
 		t.Fatalf("authenticated sessions after release = %d, want %d", got, authenticatedBefore)
 	}
+	if got := service.SessionStats.OnlinePlayers(); got != onlineBefore {
+		t.Fatalf("online players after release = %d, want %d", got, onlineBefore)
+	}
 }
 
 func TestSessionBindWithResultReportsOnlyFirstTransition(t *testing.T) {
 	s := New(nil)
+	defer s.Release()
 
 	bound, err := s.BindWithResult(100)
 	if err != nil || !bound {

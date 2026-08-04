@@ -59,6 +59,7 @@ var (
 // parameter.
 type Session struct {
 	sync.RWMutex                           // protect data
+	authMu          sync.Mutex             // protect identity metric transitions
 	id              int64                  // session global unique id
 	uid             int64                  // binding user id
 	lastTime        int64                  // last heartbeat time
@@ -134,28 +135,36 @@ func (s *Session) BindWithResult(uid int64) (bool, error) {
 	if uid < 1 {
 		return false, ErrIllegalUID
 	}
-	for {
-		current := atomic.LoadInt64(&s.uid)
-		if current == uid {
-			return false, nil
-		}
-		if current != 0 {
-			return false, ErrUIDMismatch
-		}
-		if atomic.CompareAndSwapInt64(&s.uid, 0, uid) {
-			if atomic.CompareAndSwapUint32(&s.authTracked, 0, 1) {
-				service.SessionStats.Authenticate()
-			}
-			return true, nil
-		}
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	current := atomic.LoadInt64(&s.uid)
+	if current == uid {
+		return false, nil
 	}
+	if current != 0 {
+		return false, ErrUIDMismatch
+	}
+	atomic.StoreInt64(&s.uid, uid)
+	if atomic.CompareAndSwapUint32(&s.authTracked, 0, 1) {
+		service.SessionStats.AuthenticateUID(uid)
+	}
+	return true, nil
 }
 
 // Release removes this session from authenticated-session metrics. It is
 // idempotent because connection shutdown can be observed by multiple goroutines.
 func (s *Session) Release() {
-	if s != nil && atomic.CompareAndSwapUint32(&s.authTracked, 1, 0) {
-		service.SessionStats.ReleaseAuthenticated()
+	if s == nil {
+		return
+	}
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.releaseAuthenticatedLocked()
+}
+
+func (s *Session) releaseAuthenticatedLocked() {
+	if atomic.CompareAndSwapUint32(&s.authTracked, 1, 0) {
+		service.SessionStats.ReleaseAuthenticatedUID(atomic.LoadInt64(&s.uid))
 	}
 }
 
@@ -451,10 +460,12 @@ func (s *Session) Restore(data map[string]interface{}) {
 
 // Clear releases all data related to current session
 func (s *Session) Clear() {
-	s.Release()
+	s.authMu.Lock()
+	s.releaseAuthenticatedLocked()
+	atomic.StoreInt64(&s.uid, 0)
+	s.authMu.Unlock()
 	s.Lock()
 	defer s.Unlock()
 
-	s.uid = 0
 	s.data = map[string]interface{}{}
 }

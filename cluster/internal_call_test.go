@@ -107,3 +107,16 @@ func TestSingletonLocalHandlerSelectsAndCallsExplicitLocalMember(t *testing.T) {
 		t.Fatalf("response = %q", response)
 	}
 }
+
+func TestSingletonLocalHandlerSelectsVersionedLocalServiceAlias(t *testing.T) {
+	n := newInternalCallTestNode(t)
+	n.Options.LocalMemberID = "dev-local"
+	n.handler.localServices = map[string]*component.Service{
+		"CarromService": {Name: "CarromService"},
+	}
+
+	memberID, err := n.handler.SelectByKey("CarromService@physics-v2", "room-42")
+	if err != nil || memberID != "dev-local" {
+		t.Fatalf("SelectByKey() = %q, %v; want versioned alias to resolve locally", memberID, err)
+	}
+}
