@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -464,6 +465,7 @@ func (h *LocalHandler) handle(conn net.Conn) {
 
 	// guarantee agent related resource be destroyed
 	defer func() {
+		_ = conn.Close()
 		if h.currentNode.SessionClosedCallback != nil {
 			h.currentNode.SessionClosedCallback(agent.session)
 		}
@@ -500,6 +502,15 @@ func (h *LocalHandler) handle(conn net.Conn) {
 			log.Println(fmt.Sprintf("Session read goroutine exit, SessionID=%d, UID=%d", agent.session.ID(), agent.session.UID()))
 		}
 	}()
+
+	// Bound the Nano handshake, including clients that never send a WS frame.
+	timeout := h.currentNode.RequestTimeout
+	if timeout <= 0 {
+		timeout = DefaultRequestTimeout
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
 
 	// read loop
 	buf := make([]byte, 2048)
@@ -542,7 +553,7 @@ func (h *LocalHandler) processPacket(agent *agent, p *packet.Packet) error {
 			return err
 		}
 
-		if _, err := agent.conn.Write(hrd); err != nil {
+		if err := agent.send(pendingMessage{controlPacket: hrd}); err != nil {
 			return err
 		}
 
@@ -552,6 +563,12 @@ func (h *LocalHandler) processPacket(agent *agent, p *packet.Packet) error {
 		}
 
 	case packet.HandshakeAck:
+		if agent.status() != statusHandshake {
+			return fmt.Errorf("handshake ACK before handshake")
+		}
+		if err := agent.conn.SetReadDeadline(time.Time{}); err != nil {
+			return err
+		}
 		agent.setStatus(statusWorking)
 		if env.Debug {
 			log.Println(fmt.Sprintf("Receive handshake ACK Id=%d, Remote=%s", agent.session.ID(), agent.conn.RemoteAddr()))
@@ -573,7 +590,7 @@ func (h *LocalHandler) processPacket(agent *agent, p *packet.Packet) error {
 		// expected
 	}
 
-	agent.lastAt = time.Now().Unix()
+	atomic.StoreInt64(&agent.lastAt, time.Now().Unix())
 	return nil
 }
 
@@ -718,6 +735,7 @@ func (h *LocalHandler) handleWS(conn *websocket.Conn) {
 	c, err := newWSConn(conn)
 	if err != nil {
 		log.Println(err)
+		_ = conn.Close()
 		return
 	}
 	go h.handle(c)
@@ -746,7 +764,7 @@ func (h *LocalHandler) localProcess(parent context.Context, handler *component.H
 	var payload = msg.Data
 	var data interface{}
 	if handler.IsRawArg {
-		data = payload
+		data = append([]byte(nil), payload...)
 	} else {
 		data = reflect.New(handler.Type.Elem()).Interface()
 		err := env.Serializer.Unmarshal(payload, data)
@@ -773,6 +791,10 @@ func (h *LocalHandler) localProcess(parent context.Context, handler *component.H
 	task := func() {
 		defer cancel()
 		defer stopTimeoutResponse()
+		if requestContext.Err() != nil {
+			requestContext.RespondSystemError(errcode.CodeRequestTimeout)
+			return
+		}
 		invokeHandler(handler, args, requestContext, msg)
 	}
 

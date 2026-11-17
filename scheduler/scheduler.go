@@ -189,6 +189,7 @@ func Close() {
 	}
 	close(chDie)
 	<-chExit
+	waitCloseTasks()
 	log.Println("Scheduler stopped")
 }
 
@@ -208,5 +209,63 @@ func TryPushTask(task Task) bool {
 	default:
 		atomic.AddInt64(&rejectedTotal, 1)
 		return false
+	}
+}
+
+var closeTaskMu sync.Mutex
+var closeTasks []Task
+var closeTaskRunning int
+var closeTaskDone chan struct{}
+
+// PushCloseTask queues lifecycle callbacks independently of business handlers.
+// Workers start on demand, using the same concurrency limit as business handlers.
+// Late connection shutdowns remain supported after the business scheduler stops.
+func PushCloseTask(task Task) {
+	if task == nil {
+		return
+	}
+	closeTaskMu.Lock()
+	closeTasks = append(closeTasks, task)
+	if closeTaskRunning == 0 {
+		closeTaskDone = make(chan struct{})
+	}
+	workers := int(atomic.LoadInt32(&workerCnt))
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	if closeTaskRunning < workers {
+		closeTaskRunning++
+		go runCloseTasks()
+	}
+	closeTaskMu.Unlock()
+}
+
+func runCloseTasks() {
+	for {
+		closeTaskMu.Lock()
+		if len(closeTasks) == 0 {
+			closeTaskRunning--
+			if closeTaskRunning == 0 {
+				close(closeTaskDone)
+			}
+			closeTaskMu.Unlock()
+			return
+		}
+		task := closeTasks[0]
+		closeTasks[0] = nil
+		closeTasks = closeTasks[1:]
+		closeTaskMu.Unlock()
+		try(task)
+	}
+}
+
+// Wait for the current batch of lifecycle work. Later arrivals start their own
+// worker even after the business scheduler has stopped.
+func waitCloseTasks() {
+	closeTaskMu.Lock()
+	done := closeTaskDone
+	closeTaskMu.Unlock()
+	if done != nil {
+		<-done
 	}
 }

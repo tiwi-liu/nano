@@ -70,12 +70,13 @@ type (
 	}
 
 	pendingMessage struct {
-		typ           message.Type // message type
-		err           message.ErrCode
-		route         string      // message route(push)
-		mid           uint64      // response message id(response)
-		payload       interface{} // payload
-		controlPacket []byte
+		typ             message.Type // message type
+		err             message.ErrCode
+		route           string      // message route(push)
+		mid             uint64      // response message id(response)
+		payload         interface{} // payload
+		controlPacket   []byte
+		closeAfterWrite bool
 	}
 )
 
@@ -197,33 +198,20 @@ func (a *agent) Kick(data []byte) error {
 	if err != nil {
 		return err
 	}
-	return a.send(pendingMessage{controlPacket: p})
+	return a.send(pendingMessage{controlPacket: p, closeAfterWrite: true})
 }
 
 // Close, implementation for session.NetworkEntity interface
 // Close closes the agent, clean inner state and close low-level connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (a *agent) Close() error {
-	if a.status() == statusClosed {
+	if atomic.SwapInt32(&a.state, statusClosed) == statusClosed {
 		return ErrCloseClosedSession
 	}
-	a.setStatus(statusClosed)
-
-	if env.Debug {
-		log.Println(fmt.Sprintf("Session closed, ID=%d, UID=%d, IP=%s",
-			a.session.ID(), a.session.UID(), a.conn.RemoteAddr()))
-	}
-
-	// prevent closing closed channel
-	select {
-	case <-a.chDie:
-		// expect
-	default:
-		close(a.chDie)
-		scheduler.PushTask(func() { session.Lifetime.Close(a.session) })
-	}
-
-	return a.conn.Close()
+	close(a.chDie)
+	err := a.conn.Close()
+	scheduler.PushCloseTask(func() { session.Lifetime.Close(a.session) })
+	return err
 }
 
 // RemoteAddr, implementation for session.NetworkEntity interface
@@ -242,7 +230,12 @@ func (a *agent) status() int32 {
 }
 
 func (a *agent) setStatus(state int32) {
-	atomic.StoreInt32(&a.state, state)
+	for {
+		previous := a.status()
+		if previous == statusClosed || atomic.CompareAndSwapInt32(&a.state, previous, state) {
+			return
+		}
+	}
 }
 
 func (a *agent) write() {
@@ -250,7 +243,6 @@ func (a *agent) write() {
 	// clean func
 	defer func() {
 		ticker.Stop()
-		close(a.chSend)
 		a.Close()
 		if env.Debug {
 			log.Println(fmt.Sprintf("Session write goroutine exit, SessionID=%d, UID=%d", a.session.ID(), a.session.UID()))
@@ -274,8 +266,10 @@ func (a *agent) write() {
 				return
 			}
 			if data.controlPacket != nil {
-				a.writePacket(data.controlPacket)
-				return
+				if !a.writePacket(data.controlPacket) || data.closeAfterWrite {
+					return
+				}
+				continue
 			}
 			payload, err := message.Serialize(data.payload)
 			if err != nil {

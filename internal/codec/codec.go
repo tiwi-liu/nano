@@ -76,7 +76,7 @@ func (c *Decoder) Decode(data []byte) ([]*packet.Packet, error) {
 		err     error
 	)
 	// check length
-	if c.buf.Len() < HeadLength {
+	if c.size < 0 && c.buf.Len() < HeadLength {
 		return nil, err
 	}
 

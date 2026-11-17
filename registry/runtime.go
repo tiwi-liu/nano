@@ -86,10 +86,41 @@ func (r *Runtime) Close(ctx context.Context) error {
 }
 func (r *Runtime) watchSelf(ctx context.Context) {
 	defer close(r.done)
-	if members, err := r.registry.List(ctx); err == nil {
-		r.applySnapshot(members)
+	for ctx.Err() == nil {
+		r.watchAttempt(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		r.setStatus(MemberStatusRetired)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
+}
+
+func (r *Runtime) watchAttempt(parent context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	// Subscribe before taking the snapshot so changes during List are retained.
 	events, errs := r.registry.Watch(ctx, 0)
+	listCtx, stopList := context.WithTimeout(ctx, 3*time.Second)
+	members, err := r.registry.List(listCtx)
+	stopList()
+	if err != nil {
+		return
+	}
+	var revision int64
+	for _, member := range members {
+		if member.ID == r.memberID {
+			revision = member.Revision
+			break
+		}
+	}
+	r.applySnapshot(members)
 	for {
 		select {
 		case <-ctx.Done():
@@ -98,15 +129,22 @@ func (r *Runtime) watchSelf(ctx context.Context) {
 			if !ok {
 				return
 			}
-			r.applyEvent(event)
-		case _, ok := <-errs:
-			if ok {
-				return
+			if event.Member.ID != r.memberID {
+				continue
 			}
+			if event.Member.Revision > 0 && event.Member.Revision <= revision {
+				continue
+			}
+			if event.Member.Revision > 0 {
+				revision = event.Member.Revision
+			}
+			r.applyEvent(event)
+		case <-errs:
 			return
 		}
 	}
 }
+
 func (r *Runtime) applySnapshot(members []Member) {
 	for _, m := range members {
 		if m.ID == r.memberID {

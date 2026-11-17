@@ -82,11 +82,7 @@ func (t *Timer) ID() int64 {
 
 // Stop turns off a timer. After Stop, fn will not be called forever
 func (t *Timer) Stop() {
-	if atomic.AddInt32(&t.closed, 1) != 1 {
-		return
-	}
-
-	t.counter = 0
+	atomic.StoreInt32(&t.closed, 1)
 }
 
 // execute job function with protection
@@ -101,14 +97,14 @@ func safecall(id int64, fn TimerFunc) {
 }
 
 func cron() {
+	timerManager.muCreatedTimer.Lock()
 	if len(timerManager.createdTimer) > 0 {
-		timerManager.muCreatedTimer.Lock()
 		for _, t := range timerManager.createdTimer {
 			timerManager.timers[t.id] = t
 		}
 		timerManager.createdTimer = timerManager.createdTimer[:0]
-		timerManager.muCreatedTimer.Unlock()
 	}
+	timerManager.muCreatedTimer.Unlock()
 
 	if len(timerManager.timers) < 1 {
 		return
@@ -117,6 +113,10 @@ func cron() {
 	now := time.Now()
 	unn := now.UnixNano()
 	for id, t := range timerManager.timers {
+		if atomic.LoadInt32(&t.closed) != 0 {
+			delete(timerManager.timers, id)
+			continue
+		}
 		if t.counter == infinite || t.counter > 0 {
 			// condition timer
 			if t.condition != nil {
@@ -171,6 +171,10 @@ func NewTimer(interval time.Duration, fn TimerFunc) *Timer {
 // The duration d must be greater than zero; if not, NewCountTimer will panic.
 // Stop the timer to release associated resources.
 func NewCountTimer(interval time.Duration, count int, fn TimerFunc) *Timer {
+	return newCountTimer(interval, count, nil, fn)
+}
+
+func newCountTimer(interval time.Duration, count int, condition TimerCondition, fn TimerFunc) *Timer {
 	if fn == nil {
 		panic("nano/timer: nil timer function")
 	}
@@ -179,12 +183,13 @@ func NewCountTimer(interval time.Duration, count int, fn TimerFunc) *Timer {
 	}
 
 	t := &Timer{
-		id:       atomic.AddInt64(&timerManager.incrementID, 1),
-		fn:       fn,
-		createAt: time.Now().UnixNano(),
-		interval: interval,
-		elapse:   int64(interval), // first execution will be after interval
-		counter:  count,
+		id:        atomic.AddInt64(&timerManager.incrementID, 1),
+		fn:        fn,
+		createAt:  time.Now().UnixNano(),
+		interval:  interval,
+		elapse:    int64(interval), // first execution will be after interval
+		counter:   count,
+		condition: condition,
 	}
 
 	timerManager.muCreatedTimer.Lock()
@@ -210,8 +215,5 @@ func NewCondTimer(condition TimerCondition, fn TimerFunc) *Timer {
 		panic("nano/timer: nil condition")
 	}
 
-	t := NewCountTimer(time.Duration(math.MaxInt64), infinite, fn)
-	t.condition = condition
-
-	return t
+	return newCountTimer(time.Duration(math.MaxInt64), infinite, condition, fn)
 }

@@ -108,7 +108,8 @@ func Listen(addr string, opts ...Option) {
 	}
 
 	go scheduler.Sched()
-	sg := make(chan os.Signal)
+	sg := make(chan os.Signal, 1)
+	defer signal.Stop(sg)
 	signal.Notify(sg, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
 
 	select {
